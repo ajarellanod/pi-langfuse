@@ -2,6 +2,14 @@
 	"name": "pi-langfuse",
 	"version": "1.0.0",
 	"description": "Langfuse extension for Pi coding agent",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/gooyoung/pi-langfuse.git"
+	},
+	"bugs": {
+		"url": "https://github.com/gooyoung/pi-langfuse/issues"
+	},
+	"homepage": "https://github.com/gooyoung/pi-langfuse#readme",
 	"type": "module",
 	"main": "index.ts",
 	"scripts": {
@@ -28,7 +36,8 @@
 		"@earendil-works/pi-coding-agent": "*"
 	},
 	"publishConfig": {
-		"access": "public"
+		"access": "public",
+		"registry": "https://registry.npmjs.org"
 	},
 	"license": "MIT",
 	"engines": {
