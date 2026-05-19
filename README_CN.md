@@ -5,21 +5,32 @@
 
 [**English**](./README.md) | [**简体中文**](./README_CN.md)
 
-[Pi Coding Agent](https://github.com/earendil-works/pi-coding-agent) 的 Langfuse 可观测性扩展。将跟踪发送到 [Langfuse](https://langfuse.com) 以监控令牌、成本、延迟和工具调用。
+[Pi Coding Agent](https://github.com/earendil-works/pi-coding-agent) 的 Langfuse 可观测性扩展。将完整的 Pi 代理运行发送到 [Langfuse](https://langfuse.com)，以便您可以在一个追踪（trace）中检查用户提示词、根代理工作流、每次 LLM 生成、每次工具调用、最终助手响应、使用情况、成本和健康分数。
 
 ## 为什么选择 Langfuse？
 
-Langfuse 为 LLM 应用程序提供开源的可观测性。此扩展允许您以生产级细节**跟踪**、**监控**和**调试**您的 Pi 会话，帮助您准确了解代理的性能、成本以及可能失败的地方。
+Langfuse 为 LLM 应用程序提供开源的可观测性。此扩展允许您以生产级细节**追踪**、**监控**和**调试**您的 Pi 会话，帮助您准确了解代理的执行情况、成本消耗以及可能出现故障的环节。
 
 ## 功能
 
-- **分层跟踪**：将用户提示映射到每轮跨度和嵌套工具执行，实现深度可见性。
-- **LLM 元数据**：自动记录每轮的模型名称、提供商、令牌使用情况和 API 成本。
-- **工具可观测性**：每个工具调用的详细日志，包括参数、结果和错误状态。
-- **会话关联**：将同一 Pi 会话中的所有提示分组到单个 Langfuse 会话中。
-- **成本跟踪**：记录每代输入/输出/总成本（美元）。
-- **令牌使用**：跟踪每轮的输入和输出令牌。
-- **评估分数**：自动计算和发送工具成功率、错误次数和会话健康指标。
+- **完整的代理追踪**：为每个用户提示词创建一个追踪，包含一个根 `agent`（代理）观察节点，其中记录了提示词输入和最终助手输出。
+- **每次请求生成记录**：为每次提供商请求记录单独的 `generation`（生成）观察节点，包含实际的提供商请求负载，而不仅仅是原始提示词。
+- **捕获最终消息**：在生成和根输出中使用已定型的助手消息，因此 Langfuse 会显示用户在 Pi 中实际看到的内容。
+- **工具可观测性**：为每次工具调用创建 Langfuse `tool`（工具）观察节点，包括参数、结果和错误状态。
+- **并行工具安全性**：通过 `toolCallId` 关联工具观察节点，避免在 Pi 并发运行工具时出现结果混淆。
+- **会话关联**：将同一 Pi 会话中的所有追踪分组到一个共享的 Langfuse 会话 ID 下。
+- **成本和 Token 追踪**：当 Pi/提供商负载公开时，记录每次生成的使用情况和成本详细信息。
+- **评估分数**：自动计算并发送工具成功率、错误计数和会话健康指标。
+- **防御性负载整形**：尽可能解析类似 JSON 的字符串，限制对象深度，并在上传前截断超大负载。
+
+## 亮点
+
+`pi-langfuse` 旨在使 Pi 运行作为代理工作流具有可读性，而不仅仅是一堆日志：
+
+- 追踪（trace）的输入/输出与根 `agent` 观察节点镜像同步，使得从 Langfuse 追踪列表和详情视图中即可理解运行情况。
+- 使用工具的运行中的首次生成可以显示助手的工具调用消息，工具观察节点显示执行的输入/输出，而后续的生成显示最终的自然语言答案。
+- 工具故障会在工具观察节点上标记，并反映在追踪级别的分数中，而后续的生成仍会在其输入历史中保留工具错误结果。
+- 关机和中断的运行会刷新待处理的遥测数据，并将未完成的观察节点标记为已取消/警告，而不是默默丢失追踪记录。
 
 ## 前提条件
 
@@ -45,13 +56,13 @@ cd pi-langfuse
 npm install
 ```
 
-然后在 Pi 中使用：
+然后告诉 Pi 使用它：
 
 ```bash
 pi link /path/to/pi-langfuse
 ```
 
-或者直接在项目目录中运行 Pi——Pi 会自动发现当前目录中的扩展。
+或者直接在项目目录中运行 Pi——Pi 会自动发现当前目录中 `package.json` 的扩展。
 
 ## 配置
 
@@ -82,14 +93,14 @@ pi link /path/to/pi-langfuse
 ```bash
 export LANGFUSE_PUBLIC_KEY="pk-lf-xxxx"
 export LANGFUSE_SECRET_KEY="sk-lf-xxxx"
-export LANGFUSE_HOST="https://cloud.langfuse.com"  # 可选
+export LANGFUSE_BASE_URL="https://cloud.langfuse.com"  # 可选；也支持 LANGFUSE_HOST
 ```
 
-环境变量优先级高于 `config.json`。
+扩展会先检查本地的 `config.json`，然后回退到环境变量。
 
 ### 方式 3：本地 config.json（仅限开发）
 
-在项目根目录创建 `config.json`：
+对于本地开发，在项目根目录创建 `config.json`：
 
 ```json
 {
@@ -105,13 +116,13 @@ export LANGFUSE_HOST="https://cloud.langfuse.com"  # 可选
 
 ### 基本使用
 
-像往常一样运行 Pi——扩展会自动加载并跟踪每个会话：
+像往常一样运行 Pi——扩展会自动加载并追踪每次代理运行：
 
 ```bash
 pi "解释 Redis 的架构"
 ```
 
-会话结束后，在 [Langfuse 仪表板](https://cloud.langfuse.com) 中查看跟踪信息。
+会话结束后，在 [Langfuse 仪表板](https://cloud.langfuse.com) 中查看追踪信息。
 
 ### 验证扩展已加载
 
@@ -123,7 +134,7 @@ pi list
 
 ### 多个会话
 
-每个 Pi 会话对应一个独立的 Langfuse 会话。关闭 Pi 并重新启动即可开始新的跟踪。
+每个 Pi 会话对应一个独立的 Langfuse 会话 ID。在该 Pi 会话中的每个用户提示词都会成为归入同一会话下的独立 Langfuse 追踪。
 
 ## 开发设置
 
@@ -156,10 +167,10 @@ pi-langfuse/
 ├── .agents/
 │   └── skills/
 │       └── langfuse/
-│           └── SKILL.md       # Langfuse CLI 技能
-├── AGENTS.md           # 开发者指南（英文）
-├── README.md           # 本文件（英文）
-├── README_CN.md        # 中文 README
+│           └── SKILL.md       # 用于数据查询的 Langfuse CLI 技能
+├── AGENTS.md           # 开发者指南（扩展版）
+├── README.md           # 英文 README
+├── README_CN.md        # 本文件（中文）
 └── AGENTS_CN.md        # 开发者指南（中文）
 ```
 
@@ -169,39 +180,55 @@ pi-langfuse/
 
 1. 运行 `npm run typecheck` 检查 TypeScript 错误
 2. 启用扩展启动 Pi
-3. 运行几个提示
-4. 确认跟踪、跨度、生成和评估分数出现在 Langfuse 项目中
+3. 运行几个提示词
+4. 确认追踪、根代理观察节点、工具观察节点、生成和评估分数出现在您的 Langfuse 项目中
 
-## 跟踪模型
+## 追踪模型
 
 ```
-跟踪（名称："pi-agent"）
-├── 会话 ID：<pi-session-id>
-├── 元数据：模型、提供商、cwd、评估分数
-└── 跨度（名称："tool:<name>"）
-    ├── input:  工具参数（JSON）
-    └── output: 工具结果
-
-生成（名称："llm-response"）
-├── 模型：MiniMax-M2.7
-├── 使用量：输入/输出/总令牌
-├── 成本：输入/输出/总美元
-└── 元数据：提供商、缓存令牌
+Trace (name: "pi-agent")
+├── Session ID: <pi-session-id>
+├── input:  用户提示词，存在时包含图片/上下文摘要
+├── output: 最终助手响应
+└── Agent observation (name: "pi-agent", type: agent)
+    ├── input:  当前用户提示词
+    ├── output: 最终助手响应
+    ├── Generation observation (name: "llm-generation", type: generation)
+    │   ├── input: 提供商请求负载 / 消息历史记录
+    │   ├── output: 已定型的助手消息或工具调用消息
+    │   ├── model, usageDetails, costDetails
+    │   └── metadata: 提供商/请求详细信息
+    └── Tool observation (name: "<tool-name>", type: tool)
+        ├── input: 工具参数
+        ├── output: 工具结果
+        └── metadata: toolCallId, isError
 ```
 
-## 跟踪内容
+## 追踪内容
 
-### 跟踪级别
+### 追踪级别 (Trace Level)
 | 字段 | 说明 |
 |------|------|
-| `input` | 用户提示 |
-| `output` | 助手响应 |
+| `input` | 用户提示词，可用时包含图片/上下文摘要 |
+| `output` | Pi 中显示的最终助手响应 |
 | `sessionId` | Pi 会话标识符 |
 | `metadata.model` | 模型标识符（例如 "MiniMax-M2.7"） |
 | `metadata.provider` | LLM 提供商名称 |
 | `metadata.cwd` | 工作目录 |
 
-### 评估分数（跟踪级别）
+### 代理观察节点 (Agent Observation / 根工作流)
+| 字段 | 说明 |
+|------|------|
+| `type` | `agent` |
+| `name` | `pi-agent` |
+| `input` | 当前用户提示词负载 |
+| `output` | 最终助手响应 |
+| `metadata.sessionId` | Pi 会话标识符 |
+| `metadata.cwd` | 工作目录 |
+| `metadata.model` | 可用时的所选模型 |
+| `metadata.provider` | 可用时的提供商 |
+
+### 评估分数 (追踪级别)
 
 | 分数名称 | 类型 | 说明 |
 |----------|------|------|
@@ -211,53 +238,63 @@ pi-langfuse/
 | `tool_success_rate` | float (0-1) | 工具调用成功率 |
 | `session_had_errors` | 0 或 1 | 是否有任何工具出错 |
 
-### 生成观察（LLM 调用）
+### 生成观察节点 (Generation Observations / LLM 调用)
 | 字段 | 说明 |
 |------|------|
+| `type` | `generation` |
+| `name` | `llm-generation` |
+| `input` | 实际提供商请求负载 / 消息历史记录 |
+| `output` | 已定型的助手消息，包含工具调用轮次的工具调用负载 |
 | `model` | 模型标识符（例如 "MiniMax-M2.7"） |
-| `usage.input` | 输入令牌数 |
-| `usage.output` | 输出令牌数 |
-| `usage.total` | 总令牌数 |
+| `usageDetails.input` | 输入 Token 数 |
+| `usageDetails.output` | 输出 Token 数 |
+| `usageDetails.total` | 总 Token 数 |
 | `costDetails.total` | 总成本（美元） |
 | `costDetails.input` | 输入成本（美元） |
 | `costDetails.output` | 输出成本（美元） |
+| `metadata.provider` | 提供商名称 |
+| `metadata.requestId` | 可用时的提供商/Pi 请求标识符 |
+| `metadata.status` | 可用时的 HTTP/提供商状态 |
 
-### 跨度观察（工具调用）
+### 工具观察节点 (Tool Observations)
 | 字段 | 说明 |
 |------|------|
-| `name` | 工具名称（例如 "tool:bash"、"tool:read"） |
-| `input` | 工具参数（JSON） |
-| `output` | 工具结果（截断至 2000 字符） |
+| `type` | `tool` |
+| `name` | 工具名称（例如 "bash", "read"） |
+| `input` | 工具参数 |
+| `output` | 工具结果，为了可读性进行整形和截断 |
+| `metadata.toolCallId` | 稳定的 Pi 工具调用标识符 |
 | `metadata.isError` | 工具是否失败 |
+| `level` | 失败的工具调用为 `ERROR`，否则为 `DEFAULT` |
 
-### 观察级别分数
+### 观察节点级别分数
 | 分数名称 | 说明 |
 |----------|------|
-| `tool_is_error` | 分配给出错工具跨度的值 1 |
+| `tool_is_error` | 分配给出错个体工具观察节点的值 1 |
 
 ## Langfuse 仪表板
 
-运行后，在你的 Langfuse 项目中检查：
+运行后，在您的 Langfuse 项目中检查：
 
-1. **跟踪** — 所有 pi 代理运行及其 I/O
-2. **会话** — 按会话 ID 分组的跟踪
-3. **观察** — 工具调用和 LLM 生成
-4. **分数** — 评估指标（工具错误、成功率等）
-5. **模型使用** — 按模型划分的使用情况细分
+1. **Traces（追踪）** — 所有带输入/输出的 pi 代理运行
+2. **Sessions（会话）** — 按会话 ID 分组的追踪
+3. **Observations（观察）** — 工具调用和 LLM 生成
+4. **Scores（分数）** — 评估指标（工具错误、成功率等）
+5. **Model Usage（模型使用）** — 按模型划分的使用情况细分
 
-你也可以通过内置的 Langfuse 技能直接在终端中查询 Langfuse 数据：
+您也可以通过内置的 Langfuse 技能直接在终端中监控 Langfuse 数据：
 
 ```
-/pi-langfuse-langfuse <你的查询>
+/pi-langfuse-langfuse <您的查询>
 ```
 
 ## 故障排除
 
-### 没有跟踪出现？
+### 没有追踪出现？
 - 验证 API 密钥是否正确 — 运行 `/langfuse-setup` 重新配置
-- 检查 Langfuse 项目是否活跃且有写入容量
+- 检查您的 Langfuse 项目是否活跃且有写入容量
 - 确保 API 密钥有写入权限（非只读）
-- 在 Pi 输出中查找 `📊 Langfuse:` 日志
+- 在 Pi 输出中查找 `📊 Langfuse:` 日志信息
 
 ### 扩展未加载？
 ```bash
@@ -265,27 +302,30 @@ pi list                      # 确认 pi-langfuse 已安装
 pi install npm:pi-langfuse   # 如果缺失则重新安装
 ```
 
-### 启动时显示"缺少配置"？
+### 启动时显示 "Missing config"？
 - 扩展需要凭据。使用交互式 `/langfuse-setup` 命令
 - 或设置 `LANGFUSE_PUBLIC_KEY` 和 `LANGFUSE_SECRET_KEY` 环境变量
 
 ### 模型/成本未显示？
 - 并非所有提供商都公开成本信息
-- 检查 Langfuse 跟踪 API 获取原始观察数据
-- 生成中的 `model` 字段来自 `model_select` 事件或 `ctx.model`
+- 检查 Langfuse traces API 获取原始观察数据
+- 生成中的 `model` 字段来自提供商事件、已定型的助手消息、`model_select` 或 `ctx.model`
 
 ### API 密钥错误？
 - Langfuse 公钥以 `pk-lf-` 开头，密钥以 `sk-lf-` 开头
-- 如果使用自托管，请验证主机 URL 是否正确
+- 如果使用自托管，请验证您的主机 URL 是否正确
 
 ## 依赖项
 
-- [langfuse](https://www.npmjs.com/package/langfuse) — Langfuse SDK (^3.0.0)
+- [@langfuse/tracing](https://www.npmjs.com/package/@langfuse/tracing) — 用于 `agent`、`generation` 和 `tool` 追踪的 Langfuse 观察 API
+- [@langfuse/otel](https://www.npmjs.com/package/@langfuse/otel) — 用于将追踪导出到 Langfuse 的 OpenTelemetry 跨度处理器
+- [@langfuse/client](https://www.npmjs.com/package/@langfuse/client) — 用于分数的 Langfuse API 客户端
+- [@opentelemetry/sdk-node](https://www.npmjs.com/package/@opentelemetry/sdk-node) — Node OpenTelemetry SDK
 - [@earendil-works/pi-coding-agent](https://www.npmjs.com/package/@earendil-works/pi-coding-agent) — Pi 扩展 API（对等依赖）
 
 ## 关于 Langfuse 技能
 
-此包包含一个 Langfuse CLI 技能（位于 `.agents/skills/langfuse/`），使您可以直接从 Pi 查询 Langfuse 数据。无需离开终端即可查看跟踪、提示、数据集和分数。全局安装扩展时该技能会自动注册。
+此包包含一个 Langfuse CLI 技能（位于 `.agents/skills/langfuse/`），使您可以直接从 Pi 查询 Langfuse 数据。无需离开终端即可查看追踪、提示词、数据集和分数。全局安装扩展时该技能会自动注册。
 
 ## 许可证
 

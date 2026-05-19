@@ -5,7 +5,7 @@
 
 [**English**](./README.md) | [**简体中文**](./README_CN.md)
 
-Langfuse observability extension for [Pi Coding Agent](https://github.com/earendil-works/pi-coding-agent). Sends traces to [Langfuse](https://langfuse.com) for monitoring tokens, costs, latency, and tool calls.
+Langfuse observability extension for [Pi Coding Agent](https://github.com/earendil-works/pi-coding-agent). Sends complete Pi agent runs to [Langfuse](https://langfuse.com) so you can inspect the user prompt, root agent workflow, every LLM generation, every tool call, final assistant response, usage, cost, and health scores in one trace.
 
 ## Why Langfuse?
 
@@ -13,13 +13,24 @@ Langfuse provides open-source observability for LLM applications. This extension
 
 ## Features
 
-- **Hierarchical Tracing**: Maps user prompts to per-turn spans and nested tool executions for deep visibility.
-- **LLM Metadata**: Automatically records model name, provider, token usage, and API costs per turn.
-- **Tool Observability**: Detailed logs for every tool call, including arguments, results, and error states.
-- **Session Correlation**: Groups all prompts from the same Pi session into a single Langfuse session.
-- **Cost Tracking**: Records input/output/total costs in USD per generation.
-- **Token Usage**: Tracks input and output tokens per turn.
+- **Complete Agent Traces**: Creates one trace per user prompt with a root `agent` observation containing the prompt input and final assistant output.
+- **Per-Request Generations**: Records a separate `generation` observation for every provider request, including the actual provider payload instead of only the original prompt.
+- **Final Message Capture**: Uses finalized assistant messages for generation and root outputs, so Langfuse shows what the user actually saw in Pi.
+- **Tool Observability**: Creates Langfuse `tool` observations for every tool call, including arguments, results, and error states.
+- **Parallel Tool Safety**: Correlates tool observations by `toolCallId`, avoiding result mix-ups when Pi runs tools concurrently.
+- **Session Correlation**: Groups traces from the same Pi session under a shared Langfuse session ID.
+- **Cost and Token Tracking**: Records usage and cost details on each generation when Pi/provider payloads expose them.
 - **Evaluation Scores**: Automatically computes and sends tool success rates, error counts, and session health metrics.
+- **Defensive Payload Shaping**: Parses JSON-like strings when possible, limits object depth, and truncates large payloads before upload.
+
+## Highlights
+
+`pi-langfuse` is designed to make a Pi run readable as an agent workflow, not just a bag of logs:
+
+- The trace input/output mirrors the root `agent` observation, making the run understandable from the Langfuse trace list and detail view.
+- The first generation in a tool-using run can show the assistant's tool-call message, the tool observation shows execution I/O, and the follow-up generation shows the final natural-language answer.
+- Tool failures are marked on the tool observation and reflected in trace-level scores, while later generations still preserve the tool error result in their input history.
+- Shutdown and interrupted runs flush pending telemetry and mark unfinished observations as cancelled/warning instead of silently losing the trace.
 
 ## Prerequisites
 
@@ -82,10 +93,10 @@ Set these before starting Pi:
 ```bash
 export LANGFUSE_PUBLIC_KEY="pk-lf-xxxx"
 export LANGFUSE_SECRET_KEY="sk-lf-xxxx"
-export LANGFUSE_HOST="https://cloud.langfuse.com"  # optional
+export LANGFUSE_BASE_URL="https://cloud.langfuse.com"  # optional; LANGFUSE_HOST is also supported
 ```
 
-Environment variables take precedence over `config.json`.
+The extension checks the local `config.json` first, then falls back to environment variables.
 
 ### Method 3: Local config.json (development only)
 
@@ -105,7 +116,7 @@ For local development, create a `config.json` in the project root:
 
 ### Basic usage
 
-Run Pi as usual — the extension auto-loads and traces every session:
+Run Pi as usual — the extension auto-loads and traces every agent run:
 
 ```bash
 pi "Explain the architecture of Redis"
@@ -123,7 +134,7 @@ You should see `pi-langfuse` in the list of installed packages.
 
 ### Multiple sessions
 
-Each Pi session gets its own Langfuse session. Close Pi and start a new one to begin a new trace.
+Each Pi session gets its own Langfuse session ID. Each user prompt within that Pi session becomes a separate Langfuse trace grouped under the same session.
 
 ## Development Setup
 
@@ -170,23 +181,27 @@ There is no dedicated test suite yet. To validate changes:
 1. Run `npm run typecheck` for TypeScript errors
 2. Start Pi with the extension enabled
 3. Run a few prompts
-4. Confirm traces, spans, generations, and evaluation scores appear in your Langfuse project
+4. Confirm traces, the root agent observation, tool observations, generations, and evaluation scores appear in your Langfuse project
 
 ## Trace Model
 
 ```
 Trace (name: "pi-agent")
 ├── Session ID: <pi-session-id>
-├── Metadata: model, provider, cwd, evaluation scores
-└── Span (name: "tool:<name>")
-    ├── input:  tool parameters (JSON)
-    └── output: tool result
-
-Generation (name: "llm-response")
-├── Model: MiniMax-M2.7
-├── Usage: input/output/total tokens
-├── Cost:  input/output/total USD
-└── Metadata: provider, cached tokens
+├── input:  user prompt, images/context summary when present
+├── output: final assistant response
+└── Agent observation (name: "pi-agent", type: agent)
+    ├── input:  current user prompt
+    ├── output: final assistant response
+    ├── Generation observation (name: "llm-generation", type: generation)
+    │   ├── input: provider request payload / message history
+    │   ├── output: finalized assistant message or tool-call message
+    │   ├── model, usageDetails, costDetails
+    │   └── metadata: provider/request details
+    └── Tool observation (name: "<tool-name>", type: tool)
+        ├── input: tool parameters
+        ├── output: tool result
+        └── metadata: toolCallId, isError
 ```
 
 ## What Gets Tracked
@@ -194,12 +209,24 @@ Generation (name: "llm-response")
 ### Trace Level
 | Field | Description |
 |-------|-------------|
-| `input` | User prompt |
-| `output` | Assistant response |
+| `input` | User prompt, with images/context summary when available |
+| `output` | Final assistant response shown in Pi |
 | `sessionId` | Pi session identifier |
 | `metadata.model` | Model identifier (e.g., "MiniMax-M2.7") |
 | `metadata.provider` | LLM provider name |
 | `metadata.cwd` | Working directory |
+
+### Agent Observation (Root Workflow)
+| Field | Description |
+|-------|-------------|
+| `type` | `agent` |
+| `name` | `pi-agent` |
+| `input` | Current user prompt payload |
+| `output` | Final assistant response |
+| `metadata.sessionId` | Pi session identifier |
+| `metadata.cwd` | Working directory |
+| `metadata.model` | Selected model when available |
+| `metadata.provider` | Provider when available |
 
 ### Evaluation Scores (Trace Level)
 
@@ -214,26 +241,36 @@ Generation (name: "llm-response")
 ### Generation Observations (LLM Calls)
 | Field | Description |
 |-------|-------------|
+| `type` | `generation` |
+| `name` | `llm-generation` |
+| `input` | Actual provider request payload / message history |
+| `output` | Finalized assistant message, including tool-call payloads for tool-calling turns |
 | `model` | Model identifier (e.g., "MiniMax-M2.7") |
-| `usage.input` | Input token count |
-| `usage.output` | Output token count |
-| `usage.total` | Total token count |
+| `usageDetails.input` | Input token count |
+| `usageDetails.output` | Output token count |
+| `usageDetails.total` | Total token count |
 | `costDetails.total` | Total cost in USD |
 | `costDetails.input` | Input cost in USD |
 | `costDetails.output` | Output cost in USD |
+| `metadata.provider` | Provider name |
+| `metadata.requestId` | Provider/Pi request identifier when available |
+| `metadata.status` | HTTP/provider status when available |
 
-### Span Observations (Tool Calls)
+### Tool Observations
 | Field | Description |
 |-------|-------------|
-| `name` | Tool name (e.g., "tool:bash", "tool:read") |
-| `input` | Tool parameters (JSON) |
-| `output` | Tool result (truncated to 2000 chars) |
+| `type` | `tool` |
+| `name` | Tool name (e.g., "bash", "read") |
+| `input` | Tool parameters |
+| `output` | Tool result, shaped and truncated for readability |
+| `metadata.toolCallId` | Stable Pi tool call identifier |
 | `metadata.isError` | Whether the tool failed |
+| `level` | `ERROR` for failed tool calls, otherwise `DEFAULT` |
 
 ### Observation-Level Scores
 | Score Name | Description |
 |------------|-------------|
-| `tool_is_error` | Value 1 assigned to individual tool spans that errored |
+| `tool_is_error` | Value 1 assigned to individual tool observations that errored |
 
 ## Langfuse Dashboard
 
@@ -272,7 +309,7 @@ pi install npm:pi-langfuse   # Reinstall if missing
 ### Model/cost not showing?
 - Not all providers expose cost information
 - Check the Langfuse traces API for raw observation data
-- The `model` field in generations comes from `model_select` or `ctx.model`
+- The `model` field in generations comes from provider events, finalized assistant messages, `model_select`, or `ctx.model`
 
 ### API key errors?
 - Langfuse public keys start with `pk-lf-`, secret keys with `sk-lf-`
@@ -280,7 +317,10 @@ pi install npm:pi-langfuse   # Reinstall if missing
 
 ## Dependencies
 
-- [langfuse](https://www.npmjs.com/package/langfuse) — Langfuse SDK (^3.0.0)
+- [@langfuse/tracing](https://www.npmjs.com/package/@langfuse/tracing) — Langfuse observation API for `agent`, `generation`, and `tool` traces
+- [@langfuse/otel](https://www.npmjs.com/package/@langfuse/otel) — OpenTelemetry span processor for exporting traces to Langfuse
+- [@langfuse/client](https://www.npmjs.com/package/@langfuse/client) — Langfuse API client used for scores
+- [@opentelemetry/sdk-node](https://www.npmjs.com/package/@opentelemetry/sdk-node) — Node OpenTelemetry SDK
 - [@earendil-works/pi-coding-agent](https://www.npmjs.com/package/@earendil-works/pi-coding-agent) — Pi extension API (peer dependency)
 
 ## About Langfuse Skill
