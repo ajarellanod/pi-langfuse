@@ -1,0 +1,239 @@
+import { state } from "../state.js";
+import { getRuntime } from "../langfuse.js";
+import {
+  getRequestKey,
+  getProviderPayload,
+  shapePayload,
+  extractResponseMetadata,
+  getMessageFromEvent,
+  extractAssistantOutput,
+  extractUsage,
+  extractCostDetails,
+} from "../utils.js";
+import type { GenerationState, ObservationUpdate } from "../types.js";
+
+export function getOpenGeneration(): GenerationState | undefined {
+  if (!state.agentState) {
+    return undefined;
+  }
+
+  for (let i = state.agentState.generationOrder.length - 1; i >= 0; i--) {
+    const key = state.agentState.generationOrder[i];
+    const genState = state.agentState.activeGenerations.get(key);
+    if (genState && !genState.ended) {
+      return genState;
+    }
+  }
+
+  return undefined;
+}
+
+export async function startGeneration(event: Record<string, unknown>) {
+  if (!state.agentState?.root) {
+    return;
+  }
+
+  try {
+    const key = getRequestKey(event, `generation-${++state.agentState.generationSeq}`);
+    const payload = getProviderPayload(event);
+    const model = String(event.model ?? event.modelId ?? state.currentModel ?? "");
+    const provider = String(event.provider ?? state.currentProvider ?? "");
+    const metadata = shapePayload({
+      provider,
+      requestId: key,
+      url: event.url,
+      method: event.method,
+    }) as Record<string, unknown>;
+
+    const parent = state.agentState.activeTurn ?? state.agentState.root;
+    const generation = parent.startObservation
+      ? parent.startObservation(
+          "llm-generation",
+          {
+            input: shapePayload(payload),
+            model: model || undefined,
+            metadata,
+          },
+          { asType: "generation" },
+        )
+      : (await getRuntime()).startObservation(
+          "llm-generation",
+          {
+            input: shapePayload(payload),
+            model: model || undefined,
+            metadata,
+          },
+          { asType: "generation" },
+        );
+
+    state.agentState.activeGenerations.set(key, {
+      observation: generation,
+      requestKey: key,
+      ended: false,
+      metadata,
+    });
+    state.agentState.generationOrder.push(key);
+  } catch (e) {
+    console.warn("📊 Langfuse: Failed to start generation", e);
+  }
+}
+
+export function updateGenerationMetadata(event: Record<string, unknown>) {
+  if (!state.agentState) {
+    return;
+  }
+
+  const key = getRequestKey(event, "");
+  const metadata = extractResponseMetadata(event);
+  if (!key) {
+    const generation = getOpenGeneration();
+    if (generation) {
+      generation.metadata = { ...generation.metadata, ...metadata };
+      
+      const isError = 
+        (typeof metadata.status === "number" && metadata.status >= 400) || 
+        event.error || 
+        event.isError;
+        
+      if (isError) {
+        generation.observation.update({ 
+          metadata: generation.metadata,
+          level: "ERROR",
+          statusMessage: String(event.error ?? metadata.statusMessage ?? "Provider request failed")
+        }).end();
+        generation.ended = true;
+      } else {
+        generation.observation.update({ metadata: generation.metadata });
+      }
+    }
+    return;
+  }
+
+  const generation = state.agentState.activeGenerations.get(key) ?? getOpenGeneration();
+  if (generation) {
+    generation.metadata = { ...generation.metadata, ...metadata };
+    
+    const isError = 
+      (typeof metadata.status === "number" && metadata.status >= 400) || 
+      event.error || 
+      event.isError;
+      
+    if (isError) {
+      generation.observation.update({ 
+        metadata: generation.metadata,
+        level: "ERROR",
+        statusMessage: String(event.error ?? metadata.statusMessage ?? "Provider request failed")
+      }).end();
+      generation.ended = true;
+    } else {
+      generation.observation.update({ metadata: generation.metadata });
+    }
+  }
+}
+
+export function recordTTFT(event: Record<string, unknown>) {
+  if (!state.agentState) {
+    return;
+  }
+
+  const key = getRequestKey(event, "");
+  const generation = key ? state.agentState.activeGenerations.get(key) : getOpenGeneration();
+  
+  if (generation && !generation.ttftRecorded && !generation.ended) {
+    generation.ttftRecorded = true;
+    try {
+      generation.observation.update({ completionStartTime: new Date() });
+    } catch (e) {
+      // Ignore
+    }
+  }
+}
+
+export async function finishGenerationFromMessage(event: Record<string, unknown>) {
+  if (!state.agentState) {
+    return;
+  }
+
+  const message = getMessageFromEvent(event);
+  if (!message || message.role !== "assistant") {
+    return;
+  }
+
+  const generation = getOpenGeneration();
+  const output = extractAssistantOutput(message);
+  state.agentState.latestAssistantOutput = output;
+
+  if (!generation) {
+    return;
+  }
+
+  const usageDetails = extractUsage({ ...event, message });
+  const costDetails = extractCostDetails({ ...event, message });
+  const model = String(message.model ?? event.model ?? state.currentModel ?? "");
+  const update: ObservationUpdate = {
+    output,
+    model: model || undefined,
+    usageDetails,
+    costDetails,
+    metadata: {
+      ...generation.metadata,
+      finishReason: message.finishReason ?? message.stopReason ?? event.finishReason,
+    },
+  };
+
+  try {
+    generation.observation.update(update).end();
+    generation.ended = true;
+  } catch (e) {
+    console.warn("📊 Langfuse: Failed to finish generation", e);
+  }
+}
+
+export async function createFallbackGenerationFromTurn(event: Record<string, unknown>, message: Record<string, unknown>) {
+  if (!state.agentState?.root || state.agentState.generationOrder.length > 0) {
+    return;
+  }
+
+  try {
+    const usageDetails = extractUsage({ ...event, message });
+    const costDetails = extractCostDetails({ ...event, message });
+    const model = String(message.model ?? event.model ?? state.currentModel ?? "");
+    const parent = state.agentState.activeTurn ?? state.agentState.root;
+    const generation = parent.startObservation
+      ? parent.startObservation(
+          "llm-generation",
+          {
+            input: state.agentState.promptInput,
+            output: extractAssistantOutput(message),
+            model: model || undefined,
+            usageDetails,
+            costDetails,
+            metadata: {
+              provider: state.currentProvider || undefined,
+              sourceEvent: "turn_end",
+            },
+          },
+          { asType: "generation" },
+        )
+      : (await getRuntime()).startObservation(
+          "llm-generation",
+          {
+            input: state.agentState.promptInput,
+            output: extractAssistantOutput(message),
+            model: model || undefined,
+            usageDetails,
+            costDetails,
+            metadata: {
+              provider: state.currentProvider || undefined,
+              sourceEvent: "turn_end",
+            },
+          },
+          { asType: "generation" },
+        );
+
+    generation.end();
+    state.agentState.generationOrder.push("turn-end-fallback");
+  } catch (e) {
+    console.warn("📊 Langfuse: Failed to create fallback generation", e);
+  }
+}
