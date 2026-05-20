@@ -43,6 +43,10 @@ export function saveConfig(config: Config) {
 }
 
 export async function ensureConfig(ctx: any): Promise<boolean> {
+  if (!state.config) {
+    state.config = loadConfigFromEnv() || loadConfigFromFile();
+  }
+
   if (state.config) {
     return true;
   }

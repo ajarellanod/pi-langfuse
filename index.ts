@@ -11,7 +11,7 @@ import { basename } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 import { state, resetRunState } from "./src/state.js";
-import { ensureConfig, promptForConfig } from "./src/config.js";
+import { ensureConfig, promptForConfig, loadConfigFromEnv, loadConfigFromFile } from "./src/config.js";
 import { shutdownRuntime } from "./src/langfuse.js";
 import { getMessageFromEvent, extractAssistantOutput } from "./src/utils.js";
 import { startAgentRun, finishAgentRun } from "./src/handlers/agent.js";
@@ -34,6 +34,10 @@ import {
 // ============================================
 
 export default async function (pi: ExtensionAPI) {
+  if (!state.config) {
+    state.config = loadConfigFromEnv() || loadConfigFromFile();
+  }
+
   if (state.config) {
     console.log("📊 Langfuse: Tracing enabled →", state.config.host);
   } else {
