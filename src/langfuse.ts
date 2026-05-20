@@ -9,8 +9,8 @@ export async function getRuntime(): Promise<LangfuseRuntime> {
   }
 
   if (!runtime) {
-    const [{ NodeSDK }, { LangfuseSpanProcessor }, tracing, { LangfuseClient }] = await Promise.all([
-      import("@opentelemetry/sdk-node"),
+    const [{ BasicTracerProvider }, { LangfuseSpanProcessor }, tracing, { LangfuseClient }] = await Promise.all([
+      import("@opentelemetry/sdk-trace-base"),
       import("@langfuse/otel"),
       import("@langfuse/tracing"),
       import("@langfuse/client"),
@@ -21,8 +21,8 @@ export async function getRuntime(): Promise<LangfuseRuntime> {
       secretKey: state.config.secretKey,
       baseUrl: state.config.host,
     });
-    const sdk = new NodeSDK({ spanProcessors: [spanProcessor] });
-    sdk.start();
+    const tracerProvider = new BasicTracerProvider({ spanProcessors: [spanProcessor] });
+    tracing.setLangfuseTracerProvider(tracerProvider);
 
     runtime = {
       startObservation: tracing.startObservation as unknown as LangfuseRuntime["startObservation"],
@@ -33,7 +33,8 @@ export async function getRuntime(): Promise<LangfuseRuntime> {
         baseUrl: state.config.host,
       }) as LangfuseScoreClient,
       spanProcessor,
-      sdk,
+      tracerProvider,
+      clearTracerProvider: () => tracing.setLangfuseTracerProvider(null),
     };
   }
 
@@ -48,12 +49,12 @@ export async function shutdownRuntime(): Promise<void> {
   try {
     await runtime.scoreClient.flush?.();
     await runtime.scoreClient.shutdown?.();
-    await runtime.spanProcessor?.forceFlush?.();
-    await runtime.spanProcessor?.shutdown?.();
-    await runtime.sdk?.shutdown?.();
+    await runtime.tracerProvider?.forceFlush?.();
+    await runtime.tracerProvider?.shutdown?.();
   } catch (e) {
     console.warn("📊 Langfuse: Failed to flush/shutdown cleanly", e);
   } finally {
+    runtime.clearTracerProvider?.();
     runtime = null;
   }
 }

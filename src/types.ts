@@ -62,7 +62,8 @@ export interface LangfuseRuntime {
   ) => LangfuseObservation;
   scoreClient: LangfuseScoreClient;
   spanProcessor?: { forceFlush?: () => Promise<void>; shutdown?: () => Promise<void> };
-  sdk?: { start?: () => void; shutdown?: () => Promise<void> };
+  tracerProvider?: { forceFlush?: () => Promise<void>; shutdown?: () => Promise<void> };
+  clearTracerProvider?: () => void;
 }
 
 export interface GenerationState {
