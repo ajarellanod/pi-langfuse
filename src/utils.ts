@@ -97,6 +97,10 @@ export function safeSerialize(value: unknown, maxLength = MAX_TOOL_PAYLOAD_LENGT
   }
 }
 
+export function estimatePayloadBytes(value: unknown, maxLength = MAX_TOOL_PAYLOAD_LENGTH): number {
+  return new TextEncoder().encode(safeSerialize(value, maxLength)).length;
+}
+
 export function extractTextContent(content: unknown, maxLength?: number): string | undefined {
   if (typeof content === "string") {
     return maxLength ? truncate(content, maxLength) : content;

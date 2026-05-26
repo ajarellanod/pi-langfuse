@@ -17,7 +17,7 @@ Langfuse provides open-source observability for LLM applications. This extension
 - **REST fallback for self-hosted Langfuse**: Uses the Langfuse OpenTelemetry SDK first, then verifies that the trace is visible. If a self-hosted OTel ingestion pipeline accepts spans but does not materialize traces, the extension writes the run through Langfuse's REST ingestion API.
 - **Per-Request Generations**: Records a separate `generation` observation for every provider request, including the actual provider payload instead of only the original prompt.
 - **Final Message Capture**: Uses finalized assistant messages for generation and root outputs, so Langfuse shows what the user actually saw in Pi.
-- **Tool Observability**: Creates Langfuse `tool` observations for every tool call, including arguments, results, and error states.
+- **Tool Observability**: Creates Langfuse `tool` observations for every tool call, including arguments, results, error states, and payload/latency metrics.
 - **Parallel Tool Safety**: Correlates tool observations by `toolCallId`, avoiding result mix-ups when Pi runs tools concurrently.
 - **Session Correlation**: Groups traces from the same Pi session under a shared Langfuse session ID.
 - **Cost and Token Tracking**: Records usage and cost details on each generation when Pi/provider payloads expose them.
@@ -32,6 +32,7 @@ Langfuse provides open-source observability for LLM applications. This extension
 - The first generation in a tool-using run can show the assistant's tool-call message, the tool observation shows execution I/O, and the follow-up generation shows the final natural-language answer.
 - Tool failures are marked on the tool observation and reflected in trace-level scores, while later generations still preserve the tool error result in their input history.
 - Shutdown and interrupted runs flush pending telemetry and mark unfinished observations as cancelled/warning instead of silently losing the trace.
+- Agent-end runtime shutdown is deferred so Langfuse flushing does not block Pi's visible turn completion.
 
 ## Prerequisites
 
@@ -265,6 +266,9 @@ Trace (name: "pi-agent")
 | `output` | Tool result, shaped and truncated for readability |
 | `metadata.toolCallId` | Stable Pi tool call identifier |
 | `metadata.isError` | Whether the tool failed |
+| `metadata.durationMs` | Approximate tool runtime in milliseconds |
+| `metadata.inputBytes` | UTF-8 byte size of the shaped tool input payload |
+| `metadata.outputBytes` | UTF-8 byte size of the shaped tool output payload |
 | `level` | `ERROR` for failed tool calls, otherwise `DEFAULT` |
 
 ### Observation-Level Scores

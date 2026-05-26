@@ -7,6 +7,7 @@ import {
   shapePayload,
   extractTextContent,
   truncate,
+  estimatePayloadBytes,
 } from "../utils.js";
 import { MAX_TOOL_PAYLOAD_LENGTH } from "../constants.js";
 
@@ -22,27 +23,36 @@ export async function startToolObservation(event: Record<string, unknown>) {
 
   try {
     const toolName = getToolName(event);
+    const toolInput = getToolInput(event);
+    const shapedInput = shapePayload(toolInput, { maxString: MAX_TOOL_PAYLOAD_LENGTH });
+    const inputBytes = estimatePayloadBytes(shapedInput, MAX_TOOL_PAYLOAD_LENGTH);
     const parent = state.agentState.activeTurn ?? state.agentState.root;
     const tool = parent.startObservation
       ? parent.startObservation(
           toolName,
           {
-            input: shapePayload(getToolInput(event), { maxString: MAX_TOOL_PAYLOAD_LENGTH }),
-            metadata: { toolName, toolCallId },
+            input: shapedInput,
+            metadata: { toolName, toolCallId, inputBytes },
           },
           { asType: "tool" },
         )
       : (await getRuntime()).startObservation(
           toolName,
           {
-            input: shapePayload(getToolInput(event), { maxString: MAX_TOOL_PAYLOAD_LENGTH }),
-            metadata: { toolName, toolCallId },
+            input: shapedInput,
+            metadata: { toolName, toolCallId, inputBytes },
           },
           { asType: "tool" },
         );
 
     state.toolCallCount++;
-    state.agentState.activeTools.set(toolCallId, { observation: tool, toolName, ended: false });
+    state.agentState.activeTools.set(toolCallId, {
+      observation: tool,
+      toolName,
+      ended: false,
+      startedAt: Date.now(),
+      inputBytes,
+    });
   } catch (e) {
     console.warn("📊 Langfuse: Failed to start tool observation", e);
   }
@@ -73,15 +83,22 @@ export async function finishToolObservation(event: Record<string, unknown>) {
     event;
 
   try {
+    const shapedOutput = shapePayload(output, { maxString: MAX_TOOL_PAYLOAD_LENGTH });
+    const outputBytes = estimatePayloadBytes(shapedOutput, MAX_TOOL_PAYLOAD_LENGTH);
+    const durationMs = Math.max(0, Date.now() - activeTool.startedAt);
+
     activeTool.observation
       .update({
-        output: shapePayload(output, { maxString: MAX_TOOL_PAYLOAD_LENGTH }),
+        output: shapedOutput,
         level: isError ? "ERROR" : "DEFAULT",
         statusMessage: isError ? truncate(String(event.error ?? output), 1_000) : undefined,
         metadata: {
           toolName: activeTool.toolName,
           toolCallId,
           isError,
+          durationMs,
+          inputBytes: activeTool.inputBytes,
+          outputBytes,
         },
       })
       .end();

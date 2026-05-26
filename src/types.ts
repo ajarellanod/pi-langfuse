@@ -87,6 +87,8 @@ export interface ToolState {
   observation: LangfuseObservation;
   toolName: string;
   ended: boolean;
+  startedAt: number;
+  inputBytes: number;
 }
 
 export interface AgentState {
