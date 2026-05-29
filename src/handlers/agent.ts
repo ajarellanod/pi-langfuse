@@ -19,6 +19,7 @@ export function updateTraceIO(input?: unknown, output?: unknown) {
 
 export async function startAgentRun(event: Record<string, unknown>, ctx: any) {
   if (!(await ensureConfig(ctx))) {
+    state.isTracingDisabled = true;
     return;
   }
 
@@ -92,6 +93,7 @@ export async function startAgentRun(event: Record<string, unknown>, ctx: any) {
     updateTraceIO(promptInput, undefined);
   } catch (e) {
     console.warn("📊 Langfuse: Failed to create agent observation", e);
+    state.isTracingDisabled = true;
   }
 }
 

@@ -8,6 +8,7 @@ export interface SessionRunState {
   toolCallCount: number;
   errorCount: number;
   turnCount: number;
+  tracingDisabled: boolean;
 }
 
 const DEFAULT_SESSION_ID = "__pi_langfuse_default_session__";
@@ -23,6 +24,7 @@ function createSessionRunState(): SessionRunState {
     toolCallCount: 0,
     errorCount: 0,
     turnCount: 0,
+    tracingDisabled: false,
   };
 }
 
@@ -108,6 +110,13 @@ export const state = {
   },
   set turnCount(turnCount: number) {
     getSessionRunState().turnCount = turnCount;
+  },
+
+  get isTracingDisabled() {
+    return getSessionRunState().tracingDisabled;
+  },
+  set isTracingDisabled(disabled: boolean) {
+    getSessionRunState().tracingDisabled = disabled;
   },
 };
 

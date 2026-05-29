@@ -3,7 +3,7 @@ import { getRuntime } from "../langfuse.js";
 import { shapePayload } from "../utils.js";
 
 export async function startTurnObservation(event: Record<string, unknown>) {
-  if (!state.agentState?.root) {
+  if (state.isTracingDisabled || !state.agentState?.root) {
     return;
   }
 
@@ -40,7 +40,7 @@ export async function startTurnObservation(event: Record<string, unknown>) {
 }
 
 export function finishTurnObservation(event?: Record<string, unknown>) {
-  if (!state.agentState?.activeTurn) {
+  if (state.isTracingDisabled || !state.agentState?.activeTurn) {
     return;
   }
 

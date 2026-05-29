@@ -12,7 +12,7 @@ import {
 import { MAX_TOOL_PAYLOAD_LENGTH } from "../constants.js";
 
 export async function startToolObservation(event: Record<string, unknown>) {
-  if (!state.agentState?.root) {
+  if (state.isTracingDisabled || !state.agentState?.root) {
     return;
   }
 
@@ -59,7 +59,7 @@ export async function startToolObservation(event: Record<string, unknown>) {
 }
 
 export async function finishToolObservation(event: Record<string, unknown>) {
-  if (!state.agentState) {
+  if (state.isTracingDisabled || !state.agentState) {
     return;
   }
 
@@ -119,7 +119,7 @@ export async function finishToolObservation(event: Record<string, unknown>) {
 }
 
 export function closeDanglingObservations(statusMessage: string) {
-  if (!state.agentState) {
+  if (state.isTracingDisabled || !state.agentState) {
     return;
   }
 

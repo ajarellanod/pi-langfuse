@@ -1,48 +1,154 @@
-# Pi Langfuse Extension - Agents & Architecture
+# AGENTS.md
 
-## Project Overview
+## Purpose
 
-This repository contains a Pi Coding Agent extension that integrates with Langfuse to provide deep observability into agent sessions. By hooking into Pi's Extension API, it forwards telemetry data (traces, spans, and LLM generations) to Langfuse, enabling developers to monitor token usage, cost, tool execution success rates, and conversational context.
+This repository contains a Pi Coding Agent extension that sends Pi runtime telemetry to Langfuse.
+The code is small, event-driven, and stateful. Most changes affect lifecycle ordering, payload shaping,
+or session isolation rather than UI behavior.
 
-## Architecture & Event Mapping
+Use this file as the working guide for code changes in this repo. For user-facing installation and
+feature documentation, prefer `README.md` and `README_CN.md`.
 
-The extension leverages the `@earendil-works/pi-coding-agent` Extension API to intercept lifecycle events and maps them to Langfuse's hierarchical observability model: **Trace** -> **Span** / **Generation**.
+## Repository Map
 
-### 1. Trace Level (Agent Run)
-The root of the observability tree is a **Trace**, representing a single user prompt and the agent's complete execution to fulfill it.
+- `index.ts`: extension entrypoint; registers Pi commands and hooks all Pi lifecycle events.
+- `src/handlers/agent.ts`: starts and finishes the root Langfuse agent observation and trace IO.
+- `src/handlers/generation.ts`: tracks provider requests, response metadata, TTFT, and generation completion.
+- `src/handlers/tool.ts`: tracks tool observations, correlates them by `toolCallId`, and records tool error scores.
+- `src/handlers/turn.ts`: creates turn-level span wrappers so generations and tools can nest under a turn.
+- `src/state.ts`: session-scoped mutable runtime state built on `AsyncLocalStorage`.
+- `src/config.ts`: config loading, first-run setup UI, and config persistence.
+- `src/langfuse.ts`: Langfuse runtime bootstrap, score client, flush/shutdown, and REST fallback ingestion.
+- `src/utils.ts`: payload shaping, truncation, extraction helpers, and defensive parsing.
+- `src/constants.ts`: payload size and truncation limits.
+- `src/types.ts`: shared runtime and observation typings.
+- `test/state.test.ts`: verifies per-session state isolation and overlapping async session safety.
+- `test/utils.test.ts`: verifies payload shaping limits and circular handling.
+- `.agents/skills/langfuse/`: local Langfuse skill docs and references used by agents working in this repo.
 
-- `before_agent_start` / `agent_start`: Initializes the `pi-agent` **Trace**. Captures the initial prompt, working directory (`cwd`), and session ID.
-- `agent_end`: Finalizes the trace, captures the final assistant output, and submits evaluation scores (e.g., tool call count, success rate).
+## Runtime Model
 
-### 2. Generation Level (LLM Calls)
-Every time the agent communicates with an LLM provider, a **Generation** is recorded to track token usage, costs, and latency.
+The extension maps Pi events onto one Langfuse trace tree:
 
-- `before_provider_request`: Starts the `llm-generation` observation.
-- `after_provider_response`: Updates the generation with HTTP status and provider metadata.
-- `message_update`: Tracks streaming text (can be used to track Time-To-First-Token).
-- `message_end`: Ends the generation, extracting `usageDetails` (input/output tokens, cache metrics) and `costDetails`.
-- `turn_end`: Handles fallback generation logging if standard message events miss the completion.
+- One Pi agent run becomes one `pi-agent` trace with a root `agent` observation.
+- Provider requests become `llm-generation` observations.
+- Tool calls become `tool` observations.
+- Turns become `span` observations that can parent generations and tool calls.
+- Session-level bookkeeping is keyed by Pi session ID, not by global process state.
 
-### 3. Span Level (Tool Executions)
-When the LLM decides to use a registered tool (e.g., bash, file read), a **Span** is created under the root trace.
+The main event flow is:
 
-- `tool_execution_start` / `tool_call`: Starts a `tool` span, logging the tool name and its input parameters (truncated for safety).
-- `tool_result` / `tool_execution_end`: Finalizes the tool span. If the tool fails, the span's level is marked as `ERROR` and the error message is recorded.
+1. `session_start`: ensure config and reset run state for the session.
+2. `before_agent_start` / `agent_start`: create the root agent observation if missing.
+3. `turn_start`: open a turn span.
+4. `before_provider_request`: start a generation.
+5. `after_provider_response`: attach provider metadata and early error status.
+6. `message_update`: record TTFT and capture the latest assistant output.
+7. `message_end`: finalize the active generation.
+8. `tool_execution_start` / `tool_call`: start a tool observation.
+9. `tool_result` / `tool_execution_end`: finalize the matching tool observation.
+10. `turn_end`: close the turn and synthesize a fallback generation if Pi skipped normal generation events.
+11. `agent_end`: close the root observation, update trace IO, and send aggregate scores.
+12. `session_shutdown`: close dangling observations and flush Langfuse runtime state.
 
-### 4. Session & Lifecycle Management
-- `session_start`: Captures the stable session ID from Pi (`ctx.sessionManager.getSessionFile()`).
-- `session_shutdown`: Cleans up and flushes dangling observations (e.g., if the user abruptly exits via `Ctrl+C`).
+## Working Rules
 
-## Development & Testing
+- Preserve session isolation. `src/state.ts` uses `AsyncLocalStorage` so overlapping handlers do not leak
+  counters or active observations across Pi sessions.
+- Preserve idempotency around lifecycle hooks. `before_agent_start` and `agent_start`, and similarly
+  tool/generation start-end pairs, may both fire; handlers are written to tolerate duplicate entry points.
+- Keep tool correlation keyed by `toolCallId`. This is important for concurrent tool execution.
+- Maintain defensive payload shaping. Large objects, circular references, deep trees, and JSON-like strings
+  are intentionally normalized before being sent to Langfuse.
+- Do not bypass `shapePayload()`, `truncate()`, or related helpers when adding new telemetry fields.
+- Treat config and credentials as sensitive. Never hardcode keys or commit local config artifacts.
+- Prefer minimal metadata additions. Langfuse payloads should stay readable and bounded.
 
-1. **Prerequisites**: Node.js `>=22` and a local `config.json` with Langfuse credentials (`LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_HOST`).
-2. **Run**: 
-   ```bash
-   npm install
-   pi -e ./index.ts "your test prompt"
-   ```
-3. **Validation**: Open your Langfuse dashboard to verify that Traces, Generations, and Tool Spans are accurately grouped, and that token usage/costs are populated.
+## Config Behavior
 
-## Design Constraints
-- **Statefulness**: The extension maintains module-level state (`state.ts`) because multiple Pi hooks share the same context across an agent run.
-- **Data Safety**: Large tool payloads and circular references are aggressively truncated/shaped to prevent serialization crashes and excessive network overhead.
+Config precedence is:
+
+1. `~/.pi/agent/pi-langfuse/config.json`
+2. `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY`
+3. `LANGFUSE_BASE_URL` or `LANGFUSE_HOST`
+4. Interactive `/langfuse-setup` in Pi UI when config is missing
+
+Relevant implementation details:
+
+- `src/config.ts` loads saved config first, then env vars.
+- First-run setup is only attempted once per session via `state.setupAttemptedThisSession`.
+- Manual `/langfuse-setup` clears cached config and shuts down the runtime before reconfiguring.
+
+## Langfuse-Specific Notes
+
+- The runtime is created lazily in `src/langfuse.ts`.
+- OpenTelemetry export is the primary path.
+- If OTel accepts spans but the trace never becomes visible, the extension falls back to Langfuse REST ingestion.
+- Scores are sent separately through the Langfuse client; they are not part of the OTel span export path.
+- Root trace IO is mirrored from the root agent observation when `setTraceIO()` is available.
+
+When editing Langfuse integration code, be careful with:
+
+- flush and shutdown ordering
+- trace visibility polling and fallback ingestion
+- observation parent/child nesting
+- score attribution to trace vs observation IDs
+
+## Change Guidance
+
+### When editing lifecycle code
+
+- Read `index.ts` and the affected handler together before making changes.
+- Keep fallback paths intact. Many branches exist because Pi events can arrive in different combinations.
+- If adding a new event hook, make sure it behaves correctly for multi-session execution.
+
+### When editing payload extraction
+
+- Add logic in `src/utils.ts` first, then consume it from handlers.
+- Favor tolerant extraction over strict schema assumptions because Pi/provider event payloads vary.
+- Keep truncation limits centralized in `src/constants.ts`.
+
+### When editing scores or metadata
+
+- Update both the computation path and any documentation that describes the score names.
+- Keep trace-level scores in `finishAgentRun()` and tool-level error scores in `finishToolObservation()`
+  unless there is a clear reason to move them.
+
+### When editing tests
+
+- Keep tests focused on behavior that is easy to regress: session isolation, payload shaping, event-order safety,
+  and truncation behavior.
+- Avoid broad snapshot-style tests for Langfuse payloads unless a specific regression justifies them.
+
+## Validation
+
+Run these checks after substantive changes:
+
+```bash
+npm run typecheck
+node --test test/*.test.ts
+```
+
+For integration-sensitive changes, also run Pi with the extension enabled and confirm in Langfuse that:
+
+- a trace is created for each prompt
+- the root agent observation contains prompt input and final output
+- generations and tool observations are nested correctly
+- tool errors are marked as `ERROR`
+- aggregate scores are attached to the trace
+
+## Common Pitfalls
+
+- Breaking session scoping by storing new mutable state outside `src/state.ts`.
+- Ending observations twice or forgetting to mark them as ended.
+- Losing fallback generation coverage when no normal provider lifecycle completes.
+- Adding large raw payloads directly to metadata or output fields.
+- Forgetting that self-hosted Langfuse may require the REST fallback path.
+- Documenting behavior in `AGENTS.md` or `README.md` that no longer matches the actual handlers.
+
+## Useful References
+
+- `README.md`: package usage, installation, configuration, and trace model.
+- `AGENTS_CN.md`: Chinese version of the repo guide.
+- `.agents/skills/langfuse/SKILL.md`: local Langfuse skill entry.
+- `.agents/skills/langfuse/references/`: Langfuse CLI, instrumentation, migration, and troubleshooting notes.

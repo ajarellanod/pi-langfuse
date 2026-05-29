@@ -13,7 +13,7 @@ import {
 import type { GenerationState, ObservationUpdate } from "../types.js";
 
 export function getOpenGeneration(): GenerationState | undefined {
-  if (!state.agentState) {
+  if (state.isTracingDisabled || !state.agentState) {
     return undefined;
   }
 
@@ -29,7 +29,7 @@ export function getOpenGeneration(): GenerationState | undefined {
 }
 
 export async function startGeneration(event: Record<string, unknown>) {
-  if (!state.agentState?.root) {
+  if (state.isTracingDisabled || !state.agentState?.root) {
     return;
   }
 
@@ -79,7 +79,7 @@ export async function startGeneration(event: Record<string, unknown>) {
 }
 
 export function updateGenerationMetadata(event: Record<string, unknown>) {
-  if (!state.agentState) {
+  if (state.isTracingDisabled || !state.agentState) {
     return;
   }
 
@@ -132,7 +132,7 @@ export function updateGenerationMetadata(event: Record<string, unknown>) {
 }
 
 export function recordTTFT(event: Record<string, unknown>) {
-  if (!state.agentState) {
+  if (state.isTracingDisabled || !state.agentState) {
     return;
   }
 
@@ -150,7 +150,7 @@ export function recordTTFT(event: Record<string, unknown>) {
 }
 
 export async function finishGenerationFromMessage(event: Record<string, unknown>) {
-  if (!state.agentState) {
+  if (state.isTracingDisabled || !state.agentState) {
     return;
   }
 
@@ -190,7 +190,7 @@ export async function finishGenerationFromMessage(event: Record<string, unknown>
 }
 
 export async function createFallbackGenerationFromTurn(event: Record<string, unknown>, message: Record<string, unknown>) {
-  if (!state.agentState?.root || state.agentState.generationOrder.length > 0) {
+  if (state.isTracingDisabled || !state.agentState?.root || state.agentState.generationOrder.length > 0) {
     return;
   }
 

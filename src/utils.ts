@@ -2,6 +2,7 @@ import {
   MAX_ARRAY_ITEMS,
   MAX_DEPTH,
   MAX_OBJECT_KEYS,
+  MAX_PAYLOAD_NODES,
   MAX_STRING_LENGTH,
   MAX_TOOL_PAYLOAD_LENGTH,
 } from "./constants.js";
@@ -23,11 +24,25 @@ export function tryParseJson(value: string): unknown {
   }
 }
 
-export function shapePayload(value: unknown, options: { maxString?: number; depth?: number } = {}): unknown {
+const PAYLOAD_TOO_LARGE = "[payload too large]";
+
+export function shapePayload(value: unknown, options: { maxString?: number; depth?: number; maxNodes?: number } = {}): unknown {
   const maxString = options.maxString ?? MAX_STRING_LENGTH;
   const depth = options.depth ?? MAX_DEPTH;
+  const maxNodes = options.maxNodes ?? MAX_PAYLOAD_NODES;
+  const budget = { exhausted: false, nodeCount: 0 };
 
   function visit(item: unknown, remainingDepth: number, seen: WeakSet<object>): unknown {
+    if (budget.exhausted) {
+      return PAYLOAD_TOO_LARGE;
+    }
+
+    budget.nodeCount++;
+    if (budget.nodeCount > maxNodes) {
+      budget.exhausted = true;
+      return PAYLOAD_TOO_LARGE;
+    }
+
     if (typeof item === "string") {
       const truncated = truncate(item, maxString);
       const parsed = tryParseJson(truncated);
@@ -59,7 +74,15 @@ export function shapePayload(value: unknown, options: { maxString?: number; dept
     }
 
     if (Array.isArray(item)) {
-      return item.slice(0, MAX_ARRAY_ITEMS).map((entry) => visit(entry, remainingDepth - 1, seen));
+      const output: unknown[] = [];
+      const limit = Math.min(item.length, MAX_ARRAY_ITEMS);
+      for (let index = 0; index < limit; index++) {
+        output.push(visit(item[index], remainingDepth - 1, seen));
+        if (budget.exhausted) {
+          break;
+        }
+      }
+      return output;
     }
 
     if (item instanceof Error) {
@@ -77,8 +100,16 @@ export function shapePayload(value: unknown, options: { maxString?: number; dept
       seen.add(item);
 
       const output: Record<string, unknown> = {};
-      for (const [key, entry] of Object.entries(item as Record<string, unknown>).slice(0, MAX_OBJECT_KEYS)) {
-        output[key] = visit(entry, remainingDepth - 1, seen);
+      let keyCount = 0;
+      for (const key in item as Record<string, unknown>) {
+        if (!Object.hasOwn(item, key)) {
+          continue;
+        }
+        output[key] = visit((item as Record<string, unknown>)[key], remainingDepth - 1, seen);
+        keyCount++;
+        if (budget.exhausted || keyCount >= MAX_OBJECT_KEYS) {
+          break;
+        }
       }
       return output;
     }
