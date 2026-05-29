@@ -1,6 +1,6 @@
 {
 	"name": "pi-langfuse",
-	"version": "1.4.1",
+	"version": "1.4.2",
 	"description": "Langfuse extension for Pi coding agent",
 	"repository": {
 		"type": "git",
@@ -12,6 +12,16 @@
 	"homepage": "https://github.com/gooyoung/pi-langfuse#readme",
 	"type": "module",
 	"main": "index.ts",
+	"files": [
+		"index.ts",
+		"src/",
+		"types/",
+		"README.md",
+		"README_CN.md",
+		"image.png",
+		"skills-lock.json",
+		"tsconfig.json"
+	],
 	"scripts": {
 		"typecheck": "tsc --noEmit"
 	},
