@@ -42,7 +42,8 @@ interface RestFallbackStore {
   attempted: boolean;
 }
 
-const OTEL_VISIBILITY_DELAY_MS = 1_500;
+const OTEL_VISIBILITY_TIMEOUT_MS = 1_500;
+const OTEL_VISIBILITY_POLL_INTERVAL_MS = 200;
 
 function nowIso() {
   return new Date().toISOString();
@@ -190,6 +191,23 @@ async function traceExists(rt: LangfuseRuntime, traceId: string): Promise<boolea
   }
 }
 
+async function waitForTraceVisibility(rt: LangfuseRuntime, traceId: string): Promise<boolean> {
+  const deadline = Date.now() + OTEL_VISIBILITY_TIMEOUT_MS;
+
+  while (true) {
+    if (await traceExists(rt, traceId)) {
+      return true;
+    }
+
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) {
+      return false;
+    }
+
+    await delay(Math.min(OTEL_VISIBILITY_POLL_INTERVAL_MS, remainingMs));
+  }
+}
+
 function eventTimestamp(record: { endTime?: string; startTime?: string; timestamp?: string }) {
   return record.endTime ?? record.startTime ?? record.timestamp ?? nowIso();
 }
@@ -201,8 +219,7 @@ async function fallbackToRestIngestion(rt: LangfuseRuntime) {
   }
   store.attempted = true;
 
-  await delay(OTEL_VISIBILITY_DELAY_MS);
-  if (await traceExists(rt, store.trace.id)) {
+  if (await waitForTraceVisibility(rt, store.trace.id)) {
     return;
   }
 
