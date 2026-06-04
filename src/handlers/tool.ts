@@ -1,5 +1,6 @@
 import { state } from "../state.js";
 import { getRuntime, sendScore } from "../langfuse.js";
+import { startChildObservation } from "../observation.js";
 import {
   getToolCallId,
   getToolName,
@@ -37,23 +38,16 @@ export async function startToolObservation(event: Record<string, unknown>) {
     );
     const inputBytes = estimatePayloadBytes(captured.toolInput, MAX_TOOL_PAYLOAD_LENGTH);
     const parent = state.agentState.activeTurn ?? state.agentState.root;
-    const tool = parent.startObservation
-      ? parent.startObservation(
-          toolName,
-          {
-            input: captured.toolInput,
-            metadata: { ...(captured.metadata ?? {}), inputBytes },
-          },
-          { asType: "tool" },
-        )
-      : (await getRuntime()).startObservation(
-          toolName,
-          {
-            input: captured.toolInput,
-            metadata: { ...(captured.metadata ?? {}), inputBytes },
-          },
-          { asType: "tool" },
-        );
+    const tool = await startChildObservation({
+      parent,
+      runtime: getRuntime,
+      name: toolName,
+      body: {
+        input: captured.toolInput,
+        metadata: { ...(captured.metadata ?? {}), inputBytes },
+      },
+      asType: "tool",
+    });
 
     state.toolCallCount++;
     state.agentState.activeTools.set(toolCallId, {

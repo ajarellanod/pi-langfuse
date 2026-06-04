@@ -3,6 +3,7 @@ import { state } from "./state.js";
 import { randomUUID } from "node:crypto";
 
 let runtime: LangfuseRuntime | null = null;
+const activeSessions = new Set<string>();
 
 type FallbackObservationType = "SPAN" | "GENERATION";
 
@@ -294,6 +295,14 @@ export async function getRuntime(): Promise<LangfuseRuntime> {
     throw new Error("Langfuse config is not set");
   }
 
+  // Track the current session as a runtime consumer.
+  // Multiple sessions can share the same runtime; shutdown is deferred
+  // until the last session releases it.
+  const sessionId = state.currentSessionId;
+  if (sessionId) {
+    activeSessions.add(sessionId);
+  }
+
   if (!runtime) {
     const [{ BasicTracerProvider }, { LangfuseSpanProcessor }, tracing, { LangfuseClient }] = await Promise.all([
       import("@opentelemetry/sdk-trace-base"),
@@ -337,23 +346,58 @@ export async function getRuntime(): Promise<LangfuseRuntime> {
   return runtime as LangfuseRuntime;
 }
 
-export async function shutdownRuntime(): Promise<void> {
-  if (!runtime) {
+function doShutdownRuntime(): Promise<void> {
+  return (async () => {
+    if (!runtime) {
+      return;
+    }
+
+    const rt = runtime;
+    runtime = null;
+
+    try {
+      await rt.tracerProvider?.forceFlush?.();
+      await fallbackToRestIngestion(rt);
+      await rt.scoreClient.flush?.();
+      await rt.scoreClient.shutdown?.();
+      await rt.tracerProvider?.shutdown?.();
+    } catch (e) {
+      console.warn("📊 Langfuse: Failed to flush/shutdown cleanly", e);
+    } finally {
+      if (!runtime) {
+        rt.clearTracerProvider?.();
+      }
+    }
+  })();
+}
+
+/**
+ * Release the current session's reference to the Langfuse runtime.
+ * Only actually shuts down the runtime when the last session releases it.
+ * Accepts an optional sessionId for use outside of withSession (e.g. deferred callbacks).
+ */
+export async function shutdownRuntime(sessionId?: string): Promise<void> {
+  const sid = sessionId ?? state.currentSessionId;
+  if (sid) {
+    activeSessions.delete(sid);
+  }
+
+  // Still have active sessions — keep the runtime alive.
+  if (activeSessions.size > 0) {
     return;
   }
 
-  try {
-    await runtime.tracerProvider?.forceFlush?.();
-    await fallbackToRestIngestion(runtime);
-    await runtime.scoreClient.flush?.();
-    await runtime.scoreClient.shutdown?.();
-    await runtime.tracerProvider?.shutdown?.();
-  } catch (e) {
-    console.warn("📊 Langfuse: Failed to flush/shutdown cleanly", e);
-  } finally {
-    runtime.clearTracerProvider?.();
-    runtime = null;
-  }
+  await doShutdownRuntime();
+}
+
+/**
+ * Force-shutdown the Langfuse runtime regardless of active session references.
+ * Used when the user manually reconfigures (e.g. /langfuse-setup) and needs
+ * a fresh runtime with new credentials.
+ */
+export async function forceShutdownRuntime(): Promise<void> {
+  activeSessions.clear();
+  await doShutdownRuntime();
 }
 
 export async function sendScore(name: string, value: number, options: { traceId?: string; observationId?: string } = {}) {

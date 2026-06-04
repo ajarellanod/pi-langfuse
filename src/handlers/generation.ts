@@ -1,5 +1,6 @@
 import { state } from "../state.js";
 import { getRuntime } from "../langfuse.js";
+import { startChildObservation } from "../observation.js";
 import {
   getRequestKey,
   getProviderPayload,
@@ -55,25 +56,17 @@ export async function startGeneration(event: Record<string, unknown>) {
     );
 
     const parent = state.agentState.activeTurn ?? state.agentState.root;
-    const generation = parent.startObservation
-      ? parent.startObservation(
-          "llm-generation",
-          {
-            input: captured.input,
-            model: model || undefined,
-            metadata: captured.metadata,
-          },
-          { asType: "generation" },
-        )
-      : (await getRuntime()).startObservation(
-          "llm-generation",
-          {
-            input: captured.input,
-            model: model || undefined,
-            metadata: captured.metadata,
-          },
-          { asType: "generation" },
-        );
+    const generation = await startChildObservation({
+      parent,
+      runtime: getRuntime,
+      name: "llm-generation",
+      body: {
+        input: captured.input,
+        model: model || undefined,
+        metadata: captured.metadata,
+      },
+      asType: "generation",
+    });
 
     state.agentState.activeGenerations.set(key, {
       observation: generation,
@@ -222,31 +215,20 @@ export async function createFallbackGenerationFromTurn(event: Record<string, unk
       getCapturePolicy(),
     );
     const parent = state.agentState.activeTurn ?? state.agentState.root;
-    const generation = parent.startObservation
-      ? parent.startObservation(
-          "llm-generation",
-          {
-            input: captured.input,
-            output: captured.output,
-            model: model || undefined,
-            usageDetails,
-            costDetails,
-            metadata: captured.metadata,
-          },
-          { asType: "generation" },
-        )
-      : (await getRuntime()).startObservation(
-          "llm-generation",
-          {
-            input: captured.input,
-            output: captured.output,
-            model: model || undefined,
-            usageDetails,
-            costDetails,
-            metadata: captured.metadata,
-          },
-          { asType: "generation" },
-        );
+    const generation = await startChildObservation({
+      parent,
+      runtime: getRuntime,
+      name: "llm-generation",
+      body: {
+        input: captured.input,
+        output: captured.output,
+        model: model || undefined,
+        usageDetails,
+        costDetails,
+        metadata: captured.metadata,
+      },
+      asType: "generation",
+    });
 
     generation.end();
     state.agentState.generationOrder.push("turn-end-fallback");

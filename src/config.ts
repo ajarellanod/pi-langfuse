@@ -2,7 +2,7 @@ import { mkdirSync, readFileSync, existsSync, writeFileSync } from "node:fs";
 import type { Config } from "./types.js";
 import { CONFIG_DIR, CONFIG_PATH, DEFAULT_LANGFUSE_HOST } from "./constants.js";
 import { state } from "./state.js";
-import { shutdownRuntime } from "./langfuse.js";
+import { forceShutdownRuntime } from "./langfuse.js";
 import { createCapturePolicy, type EnvLike } from "./capture-policy.js";
 
 export function loadConfigFromFile(path = CONFIG_PATH, env: EnvLike = process.env as EnvLike): Config | null {
@@ -124,7 +124,7 @@ export async function ensureConfig(ctx: any): Promise<boolean> {
 export async function promptForConfig(ctx: any): Promise<boolean> {
   state.setupAttemptedThisSession = false;
   state.config = null;
-  await shutdownRuntime();
+  await forceShutdownRuntime();
 
   const config = await collectConfigFromUI(ctx, "Manual setup requested");
   if (!config) {

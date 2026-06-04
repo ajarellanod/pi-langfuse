@@ -86,6 +86,19 @@ test("keeps async session scopes isolated when handlers overlap", async () => {
   assert.equal(state.toolCallCount, 11);
 });
 
+test("preserves setup attempt guard when resetting run state", () => {
+  clearAllSessionStates();
+
+  setCurrentSession("session-a");
+  state.setupAttemptedThisSession = true;
+  state.toolCallCount = 2;
+
+  resetRunState();
+
+  assert.equal(state.toolCallCount, 0);
+  assert.equal(state.setupAttemptedThisSession, true);
+});
+
 function delay(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }

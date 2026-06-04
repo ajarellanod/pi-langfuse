@@ -14,6 +14,8 @@ cd pi-langfuse
 npm install
 ```
 
+本仓库仅支持 npm。请保留 `package-lock.json` 作为唯一依赖锁文件，不要提交其他包管理器生成的 lockfile。
+
 开发阶段可将本地源码链接到 Pi：
 
 ```bash

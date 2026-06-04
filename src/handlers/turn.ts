@@ -1,5 +1,6 @@
 import { state } from "../state.js";
 import { getRuntime } from "../langfuse.js";
+import { startChildObservation } from "../observation.js";
 import { shapePayload, getCapturePolicy } from "../utils.js";
 import { applyCapturePolicy } from "../capture-policy.js";
 
@@ -23,23 +24,16 @@ export async function startTurnObservation(event: Record<string, unknown>) {
       },
       getCapturePolicy(),
     );
-    const observation = state.agentState.root.startObservation
-      ? state.agentState.root.startObservation(
-          "turn",
-          {
-            input: captured.input,
-            metadata: captured.metadata,
-          },
-          { asType: "span" },
-        )
-      : (await getRuntime()).startObservation(
-          "turn",
-          {
-            input: captured.input,
-            metadata: captured.metadata,
-          },
-          { asType: "span" },
-        );
+    const observation = await startChildObservation({
+      parent: state.agentState.root,
+      runtime: getRuntime,
+      name: "turn",
+      body: {
+        input: captured.input,
+        metadata: captured.metadata,
+      },
+      asType: "span",
+    });
 
     state.agentState.activeTurn = observation;
   } catch (e) {

@@ -136,8 +136,9 @@ export default async function (pi: ExtensionAPI) {
 
   pi.on("agent_end", async (event, ctx) => withSession(ctx, async () => {
     await finishAgentRun(event);
+    const sessionId = state.currentSessionId;
     setTimeout(() => {
-      shutdownRuntime().catch((error) => {
+      shutdownRuntime(sessionId).catch((error) => {
         console.warn("📊 Langfuse: Deferred shutdown failed", error);
       });
     }, 0);

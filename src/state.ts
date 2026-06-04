@@ -9,6 +9,7 @@ export interface SessionRunState {
   errorCount: number;
   turnCount: number;
   tracingDisabled: boolean;
+  setupAttemptedThisSession: boolean;
 }
 
 const DEFAULT_SESSION_ID = "__pi_langfuse_default_session__";
@@ -25,6 +26,7 @@ function createSessionRunState(): SessionRunState {
     errorCount: 0,
     turnCount: 0,
     tracingDisabled: false,
+    setupAttemptedThisSession: false,
   };
 }
 
@@ -59,7 +61,6 @@ export function runWithSession<T>(sessionId: string | undefined, fn: () => T): T
 
 export const state = {
   config: null as Config | null,
-  setupAttemptedThisSession: false,
   sessionStates: new Map<string, SessionRunState>(),
 
   get currentSessionId() {
@@ -118,10 +119,23 @@ export const state = {
   set isTracingDisabled(disabled: boolean) {
     getSessionRunState().tracingDisabled = disabled;
   },
+
+  get setupAttemptedThisSession() {
+    return getSessionRunState().setupAttemptedThisSession;
+  },
+  set setupAttemptedThisSession(attempted: boolean) {
+    getSessionRunState().setupAttemptedThisSession = attempted;
+  },
 };
 
 export function resetRunState(sessionId = getActiveSessionId()) {
-  state.sessionStates.set(normalizeSessionId(sessionId), createSessionRunState());
+  const normalizedSessionId = normalizeSessionId(sessionId);
+  const setupAttemptedThisSession =
+    state.sessionStates.get(normalizedSessionId)?.setupAttemptedThisSession ?? false;
+  state.sessionStates.set(normalizedSessionId, {
+    ...createSessionRunState(),
+    setupAttemptedThisSession,
+  });
 }
 
 export function clearAllSessionStates() {

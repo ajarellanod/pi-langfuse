@@ -14,6 +14,8 @@ cd pi-langfuse
 npm install
 ```
 
+This repository supports npm only. Keep `package-lock.json` as the single dependency lockfile and do not commit lockfiles from other package managers.
+
 Link the extension into Pi during development:
 
 ```bash
