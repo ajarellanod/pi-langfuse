@@ -9,8 +9,10 @@ import {
   extractAssistantOutput,
   extractUsage,
   extractCostDetails,
+  getCapturePolicy,
 } from "../utils.js";
 import type { GenerationState, ObservationUpdate } from "../types.js";
+import { applyCapturePolicy } from "../capture-policy.js";
 
 export function getOpenGeneration(): GenerationState | undefined {
   if (state.isTracingDisabled || !state.agentState) {
@@ -44,24 +46,31 @@ export async function startGeneration(event: Record<string, unknown>) {
       url: event.url,
       method: event.method,
     }) as Record<string, unknown>;
+    const captured = applyCapturePolicy(
+      {
+        input: shapePayload(payload),
+        metadata,
+      },
+      getCapturePolicy(),
+    );
 
     const parent = state.agentState.activeTurn ?? state.agentState.root;
     const generation = parent.startObservation
       ? parent.startObservation(
           "llm-generation",
           {
-            input: shapePayload(payload),
+            input: captured.input,
             model: model || undefined,
-            metadata,
+            metadata: captured.metadata,
           },
           { asType: "generation" },
         )
       : (await getRuntime()).startObservation(
           "llm-generation",
           {
-            input: shapePayload(payload),
+            input: captured.input,
             model: model || undefined,
-            metadata,
+            metadata: captured.metadata,
           },
           { asType: "generation" },
         );
@@ -70,7 +79,7 @@ export async function startGeneration(event: Record<string, unknown>) {
       observation: generation,
       requestKey: key,
       ended: false,
-      metadata,
+      metadata: captured.metadata ?? {},
     });
     state.agentState.generationOrder.push(key);
   } catch (e) {
@@ -84,7 +93,7 @@ export function updateGenerationMetadata(event: Record<string, unknown>) {
   }
 
   const key = getRequestKey(event, "");
-  const metadata = extractResponseMetadata(event);
+  const metadata = applyCapturePolicy({ metadata: extractResponseMetadata(event) }, getCapturePolicy()).metadata ?? {};
   if (!key) {
     const generation = getOpenGeneration();
     if (generation) {
@@ -160,7 +169,9 @@ export async function finishGenerationFromMessage(event: Record<string, unknown>
   }
 
   const generation = getOpenGeneration();
-  const output = extractAssistantOutput(message);
+  const rawOutput = extractAssistantOutput(message);
+  const captured = applyCapturePolicy({ output: rawOutput }, getCapturePolicy());
+  const output = captured.output;
   state.agentState.latestAssistantOutput = output;
 
   if (!generation) {
@@ -180,6 +191,7 @@ export async function finishGenerationFromMessage(event: Record<string, unknown>
       finishReason: message.finishReason ?? message.stopReason ?? event.finishReason,
     },
   };
+  update.metadata = applyCapturePolicy({ metadata: update.metadata }, getCapturePolicy()).metadata;
 
   try {
     generation.observation.update(update).end();
@@ -198,35 +210,40 @@ export async function createFallbackGenerationFromTurn(event: Record<string, unk
     const usageDetails = extractUsage({ ...event, message });
     const costDetails = extractCostDetails({ ...event, message });
     const model = String(message.model ?? event.model ?? state.currentModel ?? "");
+    const captured = applyCapturePolicy(
+      {
+        input: state.agentState.promptInput,
+        output: extractAssistantOutput(message),
+        metadata: {
+          provider: state.currentProvider || undefined,
+          sourceEvent: "turn_end",
+        },
+      },
+      getCapturePolicy(),
+    );
     const parent = state.agentState.activeTurn ?? state.agentState.root;
     const generation = parent.startObservation
       ? parent.startObservation(
           "llm-generation",
           {
-            input: state.agentState.promptInput,
-            output: extractAssistantOutput(message),
+            input: captured.input,
+            output: captured.output,
             model: model || undefined,
             usageDetails,
             costDetails,
-            metadata: {
-              provider: state.currentProvider || undefined,
-              sourceEvent: "turn_end",
-            },
+            metadata: captured.metadata,
           },
           { asType: "generation" },
         )
       : (await getRuntime()).startObservation(
           "llm-generation",
           {
-            input: state.agentState.promptInput,
-            output: extractAssistantOutput(message),
+            input: captured.input,
+            output: captured.output,
             model: model || undefined,
             usageDetails,
             costDetails,
-            metadata: {
-              provider: state.currentProvider || undefined,
-              sourceEvent: "turn_end",
-            },
+            metadata: captured.metadata,
           },
           { asType: "generation" },
         );

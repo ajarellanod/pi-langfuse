@@ -8,8 +8,11 @@ import {
   extractTextContent,
   truncate,
   estimatePayloadBytes,
+  getCapturePolicy,
 } from "../utils.js";
 import { MAX_TOOL_PAYLOAD_LENGTH } from "../constants.js";
+import { applyCapturePolicy } from "../capture-policy.js";
+import { redactString } from "../redaction.js";
 
 export async function startToolObservation(event: Record<string, unknown>) {
   if (state.isTracingDisabled || !state.agentState?.root) {
@@ -25,22 +28,29 @@ export async function startToolObservation(event: Record<string, unknown>) {
     const toolName = getToolName(event);
     const toolInput = getToolInput(event);
     const shapedInput = shapePayload(toolInput, { maxString: MAX_TOOL_PAYLOAD_LENGTH });
-    const inputBytes = estimatePayloadBytes(shapedInput, MAX_TOOL_PAYLOAD_LENGTH);
+    const captured = applyCapturePolicy(
+      {
+        toolInput: shapedInput,
+        metadata: { toolName, toolCallId },
+      },
+      getCapturePolicy(),
+    );
+    const inputBytes = estimatePayloadBytes(captured.toolInput, MAX_TOOL_PAYLOAD_LENGTH);
     const parent = state.agentState.activeTurn ?? state.agentState.root;
     const tool = parent.startObservation
       ? parent.startObservation(
           toolName,
           {
-            input: shapedInput,
-            metadata: { toolName, toolCallId, inputBytes },
+            input: captured.toolInput,
+            metadata: { ...(captured.metadata ?? {}), inputBytes },
           },
           { asType: "tool" },
         )
       : (await getRuntime()).startObservation(
           toolName,
           {
-            input: shapedInput,
-            metadata: { toolName, toolCallId, inputBytes },
+            input: captured.toolInput,
+            metadata: { ...(captured.metadata ?? {}), inputBytes },
           },
           { asType: "tool" },
         );
@@ -84,18 +94,27 @@ export async function finishToolObservation(event: Record<string, unknown>) {
 
   try {
     const shapedOutput = shapePayload(output, { maxString: MAX_TOOL_PAYLOAD_LENGTH });
-    const outputBytes = estimatePayloadBytes(shapedOutput, MAX_TOOL_PAYLOAD_LENGTH);
-    const durationMs = Math.max(0, Date.now() - activeTool.startedAt);
-
-    activeTool.observation
-      .update({
-        output: shapedOutput,
-        level: isError ? "ERROR" : "DEFAULT",
-        statusMessage: isError ? truncate(String(event.error ?? output), 1_000) : undefined,
+    const captured = applyCapturePolicy(
+      {
+        toolOutput: shapedOutput,
         metadata: {
           toolName: activeTool.toolName,
           toolCallId,
           isError,
+        },
+      },
+      getCapturePolicy(),
+    );
+    const outputBytes = estimatePayloadBytes(captured.toolOutput, MAX_TOOL_PAYLOAD_LENGTH);
+    const durationMs = Math.max(0, Date.now() - activeTool.startedAt);
+
+    activeTool.observation
+      .update({
+        output: captured.toolOutput,
+        level: isError ? "ERROR" : "DEFAULT",
+        statusMessage: isError ? redactString(truncate(String(event.error ?? output), 1_000)) : undefined,
+        metadata: {
+          ...(captured.metadata ?? {}),
           durationMs,
           inputBytes: activeTool.inputBytes,
           outputBytes,

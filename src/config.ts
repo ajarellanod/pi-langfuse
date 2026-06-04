@@ -3,17 +3,24 @@ import type { Config } from "./types.js";
 import { CONFIG_DIR, CONFIG_PATH, DEFAULT_LANGFUSE_HOST } from "./constants.js";
 import { state } from "./state.js";
 import { shutdownRuntime } from "./langfuse.js";
+import { createCapturePolicy, type EnvLike } from "./capture-policy.js";
 
-export function loadConfigFromFile(): Config | null {
-  if (existsSync(CONFIG_PATH)) {
+export function loadConfigFromFile(path = CONFIG_PATH, env: EnvLike = process.env as EnvLike): Config | null {
+  if (existsSync(path)) {
     try {
-      const content = readFileSync(CONFIG_PATH, "utf-8");
-      const config = JSON.parse(content) as Config;
+      const content = readFileSync(path, "utf-8");
+      const config = JSON.parse(content) as Config & { capture?: EnvLike; privacyPreset?: string };
       if (config.publicKey && config.secretKey) {
+        const captureSource: EnvLike = {
+          ...(config.capture ?? {}),
+          ...(config.privacyPreset ? { LANGFUSE_PRIVACY_PRESET: config.privacyPreset } : {}),
+          ...env,
+        };
         return {
           publicKey: config.publicKey,
           secretKey: config.secretKey,
           host: config.host || DEFAULT_LANGFUSE_HOST,
+          capturePolicy: createCapturePolicy(captureSource),
         };
       }
     } catch (e) {
@@ -24,9 +31,9 @@ export function loadConfigFromFile(): Config | null {
   return null;
 }
 
-export function loadConfigFromEnv(): Config | null {
-  const publicKey = process.env.LANGFUSE_PUBLIC_KEY || "";
-  const secretKey = process.env.LANGFUSE_SECRET_KEY || "";
+export function loadConfigFromEnv(env: EnvLike = process.env as EnvLike): Config | null {
+  const publicKey = env.LANGFUSE_PUBLIC_KEY || "";
+  const secretKey = env.LANGFUSE_SECRET_KEY || "";
   if (!publicKey || !secretKey) {
     return null;
   }
@@ -34,12 +41,13 @@ export function loadConfigFromEnv(): Config | null {
   return {
     publicKey,
     secretKey,
-    host: process.env.LANGFUSE_BASE_URL || process.env.LANGFUSE_HOST || DEFAULT_LANGFUSE_HOST,
+    host: env.LANGFUSE_BASE_URL || env.LANGFUSE_HOST || DEFAULT_LANGFUSE_HOST,
+    capturePolicy: createCapturePolicy(env),
   };
 }
 
-export function loadConfig(): Config | null {
-  return loadConfigFromFile() || loadConfigFromEnv();
+export function loadConfig(env: EnvLike = process.env as EnvLike, path = CONFIG_PATH): Config | null {
+  return loadConfigFromFile(path, env) || loadConfigFromEnv(env);
 }
 
 export function saveConfig(config: Config) {
@@ -72,6 +80,7 @@ async function collectConfigFromUI(ctx: any, reason: string): Promise<Config | n
     publicKey,
     secretKey,
     host: hostInput || DEFAULT_LANGFUSE_HOST,
+    capturePolicy: createCapturePolicy(),
   };
 }
 

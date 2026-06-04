@@ -6,6 +6,13 @@ import {
   MAX_STRING_LENGTH,
   MAX_TOOL_PAYLOAD_LENGTH,
 } from "./constants.js";
+import { createCapturePolicy, type CapturePolicy } from "./capture-policy.js";
+import { redactValue } from "./redaction.js";
+import { state } from "./state.js";
+
+export function getCapturePolicy(): CapturePolicy {
+  return state.config?.capturePolicy ?? createCapturePolicy();
+}
 
 export function truncate(value: string, maxLength = MAX_STRING_LENGTH): string {
   return value.length > maxLength ? `${value.slice(0, maxLength)}... [truncated]` : value;
@@ -26,7 +33,10 @@ export function tryParseJson(value: string): unknown {
 
 const PAYLOAD_TOO_LARGE = "[payload too large]";
 
-export function shapePayload(value: unknown, options: { maxString?: number; depth?: number; maxNodes?: number } = {}): unknown {
+export function shapePayload(
+  value: unknown,
+  options: { maxString?: number; depth?: number; maxNodes?: number; redact?: boolean } = {},
+): unknown {
   const maxString = options.maxString ?? MAX_STRING_LENGTH;
   const depth = options.depth ?? MAX_DEPTH;
   const maxNodes = options.maxNodes ?? MAX_PAYLOAD_NODES;
@@ -117,7 +127,15 @@ export function shapePayload(value: unknown, options: { maxString?: number; dept
     return String(item);
   }
 
-  return visit(value, depth, new WeakSet<object>());
+  const shaped = visit(value, depth, new WeakSet<object>());
+  return options.redact === false
+    ? shaped
+    : redactValue(shaped, {
+        maxDepth: depth,
+        maxStringLength: maxString,
+        maxArrayItems: MAX_ARRAY_ITEMS,
+        maxObjectKeys: MAX_OBJECT_KEYS,
+      });
 }
 
 export function safeSerialize(value: unknown, maxLength = MAX_TOOL_PAYLOAD_LENGTH): string {

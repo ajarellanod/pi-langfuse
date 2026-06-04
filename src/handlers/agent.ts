@@ -1,8 +1,25 @@
 import { state, resetRunState, computeEvaluationScores } from "../state.js";
 import { getRuntime, sendScore } from "../langfuse.js";
 import { ensureConfig } from "../config.js";
-import { shapePayload, truncate, extractFinalAssistant, extractAssistantOutput } from "../utils.js";
+import { shapePayload, truncate, extractFinalAssistant, extractAssistantOutput, getCapturePolicy } from "../utils.js";
 import { closeDanglingObservations } from "./tool.js";
+import { applyCapturePolicy } from "../capture-policy.js";
+
+function stringMetadata(metadata: Record<string, unknown> | undefined): Record<string, string> | undefined {
+  if (!metadata) {
+    return undefined;
+  }
+
+  const output: Record<string, string> = {};
+  for (const [key, value] of Object.entries(metadata)) {
+    if (typeof value === "string") {
+      output[key] = value;
+    } else if (typeof value === "number" || typeof value === "boolean" || typeof value === "bigint") {
+      output[key] = String(value);
+    }
+  }
+  return Object.keys(output).length > 0 ? output : undefined;
+}
 
 export function updateTraceIO(input?: unknown, output?: unknown) {
   const root = state.agentState?.root;
@@ -45,15 +62,28 @@ export async function startAgentRun(event: Record<string, unknown>, ctx: any) {
       // Ignore if getSystemPrompt is not available or fails
     }
 
-    const promptInput = shapePayload({
+    const rawPromptInput = shapePayload({
       prompt: event.prompt,
       images: event.images,
       context: event.context ?? event.attachments,
     });
+    const captured = applyCapturePolicy(
+      {
+        input: rawPromptInput,
+        metadata: {
+          cwd,
+          ...(state.currentModel ? { model: state.currentModel } : {}),
+          ...(state.currentProvider ? { provider: state.currentProvider } : {}),
+          sessionId: state.currentSessionId || undefined,
+        },
+        systemPrompt: systemPrompt ? truncate(String(systemPrompt), 20000) : undefined,
+      },
+      getCapturePolicy(),
+    );
 
     state.agentState = {
       cwd,
-      promptInput,
+      promptInput: captured.input,
       generationSeq: 0,
       activeGenerations: new Map(),
       generationOrder: [],
@@ -65,32 +95,25 @@ export async function startAgentRun(event: Record<string, unknown>, ctx: any) {
       {
         sessionId: state.currentSessionId ? truncate(state.currentSessionId, 200) : undefined,
         traceName: "pi-agent",
-        metadata: {
-          cwd: truncate(cwd, 200),
-          ...(state.currentModel ? { model: truncate(state.currentModel, 200) } : {}),
-          ...(state.currentProvider ? { provider: truncate(state.currentProvider, 200) } : {}),
-        },
+        metadata: stringMetadata(captured.metadata),
       },
       () =>
         rt.startObservation(
           "pi-agent",
-          {
-            input: promptInput,
-            metadata: {
-              cwd,
-              model: state.currentModel || undefined,
-              provider: state.currentProvider || undefined,
-              sessionId: state.currentSessionId || undefined,
-              ...(systemPrompt ? { systemPrompt: truncate(String(systemPrompt), 20000) } : {}),
+            {
+              input: captured.input,
+              metadata: {
+                ...(captured.metadata ?? {}),
+                ...(captured.systemPrompt ? { systemPrompt: captured.systemPrompt } : {}),
+              },
             },
-          },
           { asType: "agent" },
         ),
     );
 
     state.agentState.root = root;
     state.agentState.traceId = root.traceId;
-    updateTraceIO(promptInput, undefined);
+    updateTraceIO(captured.input, undefined);
   } catch (e) {
     console.warn("📊 Langfuse: Failed to create agent observation", e);
     state.isTracingDisabled = true;
@@ -104,7 +127,21 @@ export async function finishAgentRun(event: Record<string, unknown> = {}) {
   }
 
   const lastAssistant = extractFinalAssistant(event.messages);
-  const output = lastAssistant ? extractAssistantOutput(lastAssistant) : state.agentState.latestAssistantOutput;
+  const rawOutput = lastAssistant ? extractAssistantOutput(lastAssistant) : state.agentState.latestAssistantOutput;
+  const captured = applyCapturePolicy(
+    {
+      output: rawOutput,
+      metadata: {
+        cwd: state.agentState.cwd,
+        completed: true,
+        model: state.currentModel || undefined,
+        provider: state.currentProvider || undefined,
+        totalTools: state.toolCallCount,
+        ...computeEvaluationScores(),
+      },
+    },
+    getCapturePolicy(),
+  );
   const scores = computeEvaluationScores();
 
   closeDanglingObservations("Agent run ended before observation finalized");
@@ -112,18 +149,11 @@ export async function finishAgentRun(event: Record<string, unknown> = {}) {
   try {
     state.agentState.root
       .update({
-        output,
-        metadata: {
-          cwd: state.agentState.cwd,
-          completed: true,
-          model: state.currentModel || undefined,
-          provider: state.currentProvider || undefined,
-          totalTools: state.toolCallCount,
-          ...scores,
-        },
+        output: captured.output,
+        metadata: captured.metadata,
       })
       .end();
-    updateTraceIO(state.agentState.promptInput, output);
+    updateTraceIO(state.agentState.promptInput, captured.output);
 
     await sendScore("tool_call_count", scores.tool_call_count, { traceId: state.agentState.traceId });
     await sendScore("turn_count", scores.turn_count, { traceId: state.agentState.traceId });

@@ -1,6 +1,7 @@
 import { state } from "../state.js";
 import { getRuntime } from "../langfuse.js";
-import { shapePayload } from "../utils.js";
+import { shapePayload, getCapturePolicy } from "../utils.js";
+import { applyCapturePolicy } from "../capture-policy.js";
 
 export async function startTurnObservation(event: Record<string, unknown>) {
   if (state.isTracingDisabled || !state.agentState?.root) {
@@ -15,20 +16,27 @@ export async function startTurnObservation(event: Record<string, unknown>) {
 
   try {
     const turnIndex = event.turnIndex ?? state.turnCount;
+    const captured = applyCapturePolicy(
+      {
+        input: shapePayload(event.context ?? event),
+        metadata: { turnIndex },
+      },
+      getCapturePolicy(),
+    );
     const observation = state.agentState.root.startObservation
       ? state.agentState.root.startObservation(
           "turn",
           {
-            input: shapePayload(event.context ?? event),
-            metadata: { turnIndex },
+            input: captured.input,
+            metadata: captured.metadata,
           },
           { asType: "span" },
         )
       : (await getRuntime()).startObservation(
           "turn",
           {
-            input: shapePayload(event.context ?? event),
-            metadata: { turnIndex },
+            input: captured.input,
+            metadata: captured.metadata,
           },
           { asType: "span" },
         );
@@ -39,7 +47,7 @@ export async function startTurnObservation(event: Record<string, unknown>) {
   }
 }
 
-export function finishTurnObservation(event?: Record<string, unknown>) {
+export function finishTurnObservation(_event?: Record<string, unknown>) {
   if (state.isTracingDisabled || !state.agentState?.activeTurn) {
     return;
   }

@@ -13,7 +13,8 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { state, resetRunState, runWithSession, setCurrentSession } from "./src/state.js";
 import { ensureConfig, promptForConfig, loadConfig } from "./src/config.js";
 import { shutdownRuntime } from "./src/langfuse.js";
-import { getMessageFromEvent, extractAssistantOutput } from "./src/utils.js";
+import { getMessageFromEvent, extractAssistantOutput, getCapturePolicy } from "./src/utils.js";
+import { applyCapturePolicy } from "./src/capture-policy.js";
 import { startAgentRun, finishAgentRun } from "./src/handlers/agent.js";
 import { startTurnObservation, finishTurnObservation } from "./src/handlers/turn.js";
 import {
@@ -173,7 +174,7 @@ export default async function (pi: ExtensionAPI) {
           {
             level: "DEFAULT",
             statusMessage: "Context was compacted",
-            metadata: { ...event }
+            metadata: applyCapturePolicy({ metadata: { ...event } }, getCapturePolicy()).metadata
           }, 
           { asType: "span" }
         ) : undefined;
