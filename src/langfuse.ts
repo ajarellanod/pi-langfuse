@@ -207,11 +207,11 @@ function wrapObservation(
 
 async function traceExists(rt: LangfuseRuntime, traceId: string): Promise<boolean> {
   try {
-    const getTrace = rt.scoreClient.api?.trace?.get;
-    if (!getTrace) {
+    const traceApi = rt.scoreClient.api?.trace;
+    if (!traceApi?.get) {
       return false;
     }
-    const trace = await withTimeout("Trace visibility check", getTrace(traceId));
+    const trace = await withTimeout("Trace visibility check", traceApi.get(traceId));
     if (!trace) {
       return false;
     }
@@ -301,15 +301,15 @@ async function fallbackToRestIngestion(rt: LangfuseRuntime) {
     });
   }
 
-  const ingestionBatch = rt.scoreClient.api?.ingestion?.batch;
-  if (!ingestionBatch) {
+  const ingestionApi = rt.scoreClient.api?.ingestion;
+  if (!ingestionApi?.batch) {
     console.log("📊 Langfuse: REST fallback ingestion is unavailable");
     return;
   }
 
   const response = await withTimeout(
     "REST fallback ingestion",
-    ingestionBatch({
+    ingestionApi.batch({
       batch,
       metadata: {
         source: "pi-langfuse",
