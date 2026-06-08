@@ -1,6 +1,7 @@
 import { mkdirSync, readFileSync, existsSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 import type { Config } from "./types.js";
-import { CONFIG_DIR, CONFIG_PATH, DEFAULT_LANGFUSE_HOST } from "./constants.js";
+import { CONFIG_PATH, DEFAULT_LANGFUSE_HOST } from "./constants.js";
 import { state } from "./state.js";
 import { forceShutdownRuntime } from "./langfuse.js";
 import { createCapturePolicy, type EnvLike } from "./capture-policy.js";
@@ -50,9 +51,9 @@ export function loadConfig(env: EnvLike = process.env as EnvLike, path = CONFIG_
   return loadConfigFromFile(path, env) || loadConfigFromEnv(env);
 }
 
-export function saveConfig(config: Config) {
-  mkdirSync(CONFIG_DIR, { recursive: true });
-  writeFileSync(CONFIG_PATH, `${JSON.stringify(config, null, 2)}\n`, "utf-8");
+export function saveConfig(config: Config, path = CONFIG_PATH) {
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, `${JSON.stringify(config, null, 2)}\n`, "utf-8");
 }
 
 async function collectConfigFromUI(ctx: any, reason: string): Promise<Config | null> {

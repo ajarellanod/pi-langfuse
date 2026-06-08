@@ -13,6 +13,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { state, resetRunState, runWithSession, setCurrentSession } from "./src/state.js";
 import { ensureConfig, promptForConfig, loadConfig } from "./src/config.js";
 import { shutdownRuntime } from "./src/langfuse.js";
+import { handleLangfusePrivacyCommand, handleLangfuseTestCommand } from "./src/commands.js";
 import { getMessageFromEvent, extractAssistantOutput, getCapturePolicy } from "./src/utils.js";
 import { applyCapturePolicy } from "./src/capture-policy.js";
 import { startAgentRun, finishAgentRun } from "./src/handlers/agent.js";
@@ -49,6 +50,20 @@ export default async function (pi: ExtensionAPI) {
     description: "Configure Langfuse API keys for this extension",
     handler: async (_args, ctx) => {
       await promptForConfig(ctx);
+    },
+  });
+
+  pi.registerCommand("langfuse-test", {
+    description: "Send a test trace to Langfuse to verify configuration",
+    handler: async (args, ctx) => {
+      await handleLangfuseTestCommand(String(args ?? ""), ctx);
+    },
+  });
+
+  pi.registerCommand("langfuse-privacy", {
+    description: "View or set Langfuse telemetry privacy preset",
+    handler: async (args, ctx) => {
+      await handleLangfusePrivacyCommand(String(args ?? ""), ctx);
     },
   });
 
