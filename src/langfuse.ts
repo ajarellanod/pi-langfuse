@@ -29,6 +29,7 @@ interface RestFallbackObservation {
   output?: unknown;
   metadata?: Record<string, unknown>;
   model?: string;
+  modelParameters?: Record<string, string | number>;
   usageDetails?: Record<string, number>;
   costDetails?: Record<string, number>;
   level?: "DEBUG" | "DEFAULT" | "WARNING" | "ERROR";
@@ -114,6 +115,9 @@ function applyObservationUpdate(record: RestFallbackObservation, body: Record<st
     record.metadata = mergeMetadata(record.metadata, body.metadata as Record<string, unknown>);
   }
   if (typeof body.model === "string") record.model = body.model;
+  if (body.modelParameters && typeof body.modelParameters === "object") {
+    record.modelParameters = body.modelParameters as Record<string, string | number>;
+  }
   if (body.usageDetails && typeof body.usageDetails === "object") {
     record.usageDetails = body.usageDetails as Record<string, number>;
   }
@@ -294,6 +298,7 @@ async function fallbackToRestIngestion(rt: LangfuseRuntime) {
         ? {
             completionStartTime: observation.completionStartTime,
             model: observation.model,
+            modelParameters: observation.modelParameters,
             usageDetails: observation.usageDetails,
             costDetails: observation.costDetails,
           }

@@ -11,6 +11,7 @@ import {
   extractUsage,
   extractCostDetails,
   getCapturePolicy,
+  extractModelParameters,
 } from "../utils.js";
 import type { GenerationState, ObservationUpdate } from "../types.js";
 import { applyCapturePolicy } from "../capture-policy.js";
@@ -39,6 +40,7 @@ export async function startGeneration(event: Record<string, unknown>) {
   try {
     const key = getRequestKey(event, `generation-${++state.agentState.generationSeq}`);
     const payload = getProviderPayload(event);
+    const modelParameters = extractModelParameters(payload);
     const model = String(event.model ?? event.modelId ?? state.currentModel ?? "");
     const provider = String(event.provider ?? state.currentProvider ?? "");
     const metadata = shapePayload({
@@ -63,6 +65,7 @@ export async function startGeneration(event: Record<string, unknown>) {
       body: {
         input: captured.input,
         model: model || undefined,
+        modelParameters,
         metadata: captured.metadata,
       },
       asType: "generation",
@@ -73,6 +76,7 @@ export async function startGeneration(event: Record<string, unknown>) {
       requestKey: key,
       ended: false,
       metadata: captured.metadata ?? {},
+      modelParameters,
     });
     state.agentState.generationOrder.push(key);
   } catch (e) {
@@ -173,10 +177,12 @@ export async function finishGenerationFromMessage(event: Record<string, unknown>
 
   const usageDetails = extractUsage({ ...event, message });
   const costDetails = extractCostDetails({ ...event, message });
+  const modelParameters = extractModelParameters(getProviderPayload(event)) ?? generation.modelParameters;
   const model = String(message.model ?? event.model ?? state.currentModel ?? "");
   const update: ObservationUpdate = {
     output,
     model: model || undefined,
+    modelParameters,
     usageDetails,
     costDetails,
     metadata: {
@@ -202,6 +208,7 @@ export async function createFallbackGenerationFromTurn(event: Record<string, unk
   try {
     const usageDetails = extractUsage({ ...event, message });
     const costDetails = extractCostDetails({ ...event, message });
+    const modelParameters = extractModelParameters(getProviderPayload(event));
     const model = String(message.model ?? event.model ?? state.currentModel ?? "");
     const captured = applyCapturePolicy(
       {
@@ -223,6 +230,7 @@ export async function createFallbackGenerationFromTurn(event: Record<string, unk
         input: captured.input,
         output: captured.output,
         model: model || undefined,
+        modelParameters,
         usageDetails,
         costDetails,
         metadata: captured.metadata,

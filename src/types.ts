@@ -25,6 +25,7 @@ export interface ObservationUpdate {
   output?: unknown;
   metadata?: Record<string, unknown>;
   model?: string;
+  modelParameters?: Record<string, string | number>;
   usageDetails?: Record<string, number>;
   usage?: Record<string, number>;
   costDetails?: Record<string, number>;
@@ -83,6 +84,7 @@ export interface GenerationState {
   requestKey: string;
   ended: boolean;
   metadata: Record<string, unknown>;
+  modelParameters?: Record<string, string | number>;
   ttftRecorded?: boolean;
 }
 

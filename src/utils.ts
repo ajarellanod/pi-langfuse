@@ -35,7 +35,7 @@ const PAYLOAD_TOO_LARGE = "[payload too large]";
 
 export function shapePayload(
   value: unknown,
-  options: { maxString?: number; depth?: number; maxNodes?: number; redact?: boolean } = {},
+  options: { maxString?: number; depth?: number; maxNodes?: number; redact?: boolean; parseJson?: boolean } = {},
 ): unknown {
   const maxString = options.maxString ?? MAX_STRING_LENGTH;
   const depth = options.depth ?? MAX_DEPTH;
@@ -55,6 +55,9 @@ export function shapePayload(
 
     if (typeof item === "string") {
       const truncated = truncate(item, maxString);
+      if (options.parseJson === false) {
+        return truncated;
+      }
       const parsed = tryParseJson(truncated);
       if (parsed === truncated) {
         return truncated;
@@ -175,6 +178,63 @@ export function extractTextContent(content: unknown, maxLength?: number): string
   return maxLength ? truncate(text, maxLength) : text;
 }
 
+export function normalizeContentForLangfuse(content: unknown, api?: string): unknown {
+  if (!Array.isArray(content)) {
+    return content;
+  }
+
+  const toolCallItems = content.filter((item) => {
+    return item && typeof item === "object" && (item as { type?: string }).type === "toolCall";
+  });
+  if (toolCallItems.length === 0) {
+    return content;
+  }
+
+  const text = content
+    .map((item) => {
+      if (!item || typeof item !== "object") return "";
+      const block = item as { type?: string; text?: string };
+      return block.type === "text" && typeof block.text === "string" ? block.text : "";
+    })
+    .filter(Boolean)
+    .join("");
+
+  if (api === "anthropic-messages") {
+    const blocks: unknown[] = [];
+    if (text) {
+      blocks.push({ type: "text", text });
+    }
+    for (const item of toolCallItems) {
+      const toolCall = item as { id?: unknown; name?: unknown; arguments?: unknown };
+      const toolInput = shapePayload(toolCall.arguments, { parseJson: false });
+      blocks.push({
+        type: "tool_use",
+        id: String(toolCall.id ?? ""),
+        name: String(toolCall.name ?? "tool"),
+        input: toolInput,
+      });
+    }
+    return blocks;
+  }
+
+  return {
+    role: "assistant",
+    content: text || null,
+    tool_calls: toolCallItems.map((item) => {
+      const toolCall = item as { id?: unknown; name?: unknown; arguments?: unknown };
+      const toolArguments = shapePayload(toolCall.arguments ?? {}, { parseJson: false });
+      return {
+        id: String(toolCall.id ?? ""),
+        type: "function",
+        function: {
+          name: String(toolCall.name ?? "tool"),
+          arguments: typeof toolArguments === "string" ? toolArguments : JSON.stringify(toolArguments),
+        },
+      };
+    }),
+  };
+}
+
 export function extractToolCalls(message: Record<string, unknown>): unknown | undefined {
   return (
     message.toolCalls ??
@@ -182,7 +242,7 @@ export function extractToolCalls(message: Record<string, unknown>): unknown | un
     message.function_calls ??
     (message.content && Array.isArray(message.content)
       ? message.content.filter((block) => {
-          return block && typeof block === "object" && ["tool_use", "tool_call"].includes(String((block as { type?: string }).type));
+          return block && typeof block === "object" && ["tool_use", "tool_call", "toolCall"].includes(String((block as { type?: string }).type));
         })
       : undefined)
   );
@@ -194,6 +254,11 @@ export function extractAssistantOutput(message: unknown): unknown | undefined {
   }
 
   const msg = message as Record<string, unknown>;
+  const normalizedContent = normalizeContentForLangfuse(msg.content, typeof msg.api === "string" ? msg.api : undefined);
+  if (normalizedContent !== msg.content) {
+    return shapePayload(normalizedContent, { parseJson: false });
+  }
+
   const text = extractTextContent(msg.content);
   if (text) {
     return text;
@@ -259,6 +324,33 @@ export function getToolInput(event: Record<string, unknown>): unknown {
 
 export function getProviderPayload(event: Record<string, unknown>): unknown {
   return event.request ?? event.payload ?? event.body ?? event.providerPayload ?? event.messages ?? event;
+}
+
+export function extractModelParameters(payload: unknown): Record<string, string | number> | undefined {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return undefined;
+  }
+
+  const params: Record<string, string | number> = {};
+  const record = payload as Record<string, unknown>;
+  for (const key of [
+    "temperature",
+    "top_p",
+    "topP",
+    "max_tokens",
+    "maxTokens",
+    "max_completion_tokens",
+    "presence_penalty",
+    "frequency_penalty",
+    "reasoning_effort",
+  ]) {
+    const value = record[key];
+    if (typeof value === "string" || typeof value === "number") {
+      params[key] = value;
+    }
+  }
+
+  return Object.keys(params).length > 0 ? params : undefined;
 }
 
 export function getMessageFromEvent(event: Record<string, unknown>): Record<string, unknown> | undefined {
