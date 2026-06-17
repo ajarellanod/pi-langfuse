@@ -150,6 +150,53 @@ The package also includes a Langfuse CLI skill, so Langfuse data can be queried 
 /pi-langfuse-langfuse <your-query>
 ```
 
+## Source Metadata
+
+Local prototype note: source metadata support in this installed package is a local prototype patch. A durable solution should be shipped through an upstream PR, a fork, or a maintained package version so reinstalling the extension does not lose the behavior.
+
+For Git-backed runs, the extension attaches safe source metadata to traces:
+
+```json
+{
+  "source_type": "git-repo",
+  "repo_identity": "owner/repo",
+  "repo_owner": "owner",
+  "repo_name": "repo",
+  "repo_root_name": "repo",
+  "git_branch": "main",
+  "git_commit": "abc123",
+  "git_remote_host": "github.com",
+  "git_remote_path": "owner/repo",
+  "metadata_source": "git-detection"
+}
+```
+
+`repo_identity` is `owner/repo`. `repo_name` is the repo name only and must not contain a slash.
+
+A Git repo may optionally provide `.pi-langfuse.metadata.json`. Overrides are whitelist-only; unknown keys are ignored. Allowed keys are:
+
+```text
+repo_identity
+repo_owner
+repo_name
+source_type
+service_name
+project_slug
+environment
+observability_owner
+```
+
+Repo-local overrides are used only after the working directory is confirmed to be inside a usable Git repo. If Git detection fails for any reason, including a missing Git command, corrupted repo, or non-Git folder, the extension ignores repo-local identity files and emits only:
+
+```json
+{
+  "source_type": "non-git",
+  "metadata_source": "non-git"
+}
+```
+
+The extension must not upload raw absolute local paths, credentialed remotes, tokens, unknown override keys, or folder names for non-Git folders.
+
 ## Troubleshooting
 
 ### No traces appearing?

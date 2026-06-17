@@ -335,7 +335,8 @@ async function fallbackToRestIngestion(rt: LangfuseRuntime) {
   }
 
   const responseBody = response as { errors?: unknown[] } | undefined;
-  const errors = Array.isArray(responseBody?.errors) ? responseBody.errors : [];
+  const responseErrors = responseBody?.errors;
+  const errors = Array.isArray(responseErrors) ? responseErrors : [];
   if (errors.length > 0) {
     console.warn("📊 Langfuse: REST fallback ingestion reported errors", errors);
   } else {

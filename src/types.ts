@@ -107,5 +107,6 @@ export interface AgentState {
   generationOrder: string[];
   activeTools: Map<string, ToolState>;
   latestAssistantOutput?: unknown;
+  sourceMetadata?: Record<string, unknown>;
   providerMetadataByRequest: Map<string, Record<string, unknown>>;
 }
