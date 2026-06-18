@@ -4,6 +4,7 @@ import { ensureConfig } from "../config.js";
 import { shapePayload, truncate, extractFinalAssistant, extractAssistantOutput, getCapturePolicy } from "../utils.js";
 import { closeDanglingObservations } from "./tool.js";
 import { applyCapturePolicy } from "../capture-policy.js";
+import { collectSourceMetadata } from "../source-metadata.js";
 
 function stringMetadata(metadata: Record<string, unknown> | undefined): Record<string, string> | undefined {
   if (!metadata) {
@@ -67,11 +68,13 @@ export async function startAgentRun(event: Record<string, unknown>, ctx: any) {
       images: event.images,
       context: event.context ?? event.attachments,
     });
+    const sourceMetadata = collectSourceMetadata(cwd);
     const captured = applyCapturePolicy(
       {
         input: rawPromptInput,
         metadata: {
           cwd,
+          ...sourceMetadata,
           ...(state.currentModel ? { model: state.currentModel } : {}),
           ...(state.currentProvider ? { provider: state.currentProvider } : {}),
           sessionId: state.currentSessionId || undefined,
@@ -88,6 +91,7 @@ export async function startAgentRun(event: Record<string, unknown>, ctx: any) {
       activeGenerations: new Map(),
       generationOrder: [],
       activeTools: new Map(),
+      sourceMetadata,
       providerMetadataByRequest: new Map(),
     };
 
@@ -133,6 +137,7 @@ export async function finishAgentRun(event: Record<string, unknown> = {}) {
       output: rawOutput,
       metadata: {
         cwd: state.agentState.cwd,
+        ...(state.agentState.sourceMetadata ?? {}),
         completed: true,
         model: state.currentModel || undefined,
         provider: state.currentProvider || undefined,
