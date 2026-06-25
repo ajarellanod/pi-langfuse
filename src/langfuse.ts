@@ -3,6 +3,7 @@ import { state } from "./state.js";
 import { randomUUID } from "node:crypto";
 
 let runtime: LangfuseRuntime | null = null;
+let contextManagerRegistered = false;
 const activeSessions = new Set<string>();
 
 type FallbackObservationType = "SPAN" | "GENERATION";
@@ -358,12 +359,24 @@ export async function getRuntime(): Promise<LangfuseRuntime> {
   }
 
   if (!runtime) {
-    const [{ BasicTracerProvider }, { LangfuseSpanProcessor }, tracing, { LangfuseClient }] = await Promise.all([
+    const [{ BasicTracerProvider }, { LangfuseSpanProcessor }, tracing, { LangfuseClient }, otelApi, contextAsyncHooks] = await Promise.all([
       import("@opentelemetry/sdk-trace-base"),
       import("@langfuse/otel"),
       import("@langfuse/tracing"),
       import("@langfuse/client"),
+      import("@opentelemetry/api"),
+      import("@opentelemetry/context-async-hooks"),
     ]);
+
+    // Register a global OTel context manager exactly once. Without it, OpenTelemetry's
+    // context propagation is a no-op, which silently drops every trace attribute set via
+    // `propagateAttributes` (sessionId, tags, version). It must be enabled before any
+    // observation is created.
+    if (!contextManagerRegistered) {
+      contextManagerRegistered = otelApi.context.setGlobalContextManager(
+        new contextAsyncHooks.AsyncLocalStorageContextManager().enable(),
+      );
+    }
 
     const restFallback: RestFallbackStore = {
       observations: [],

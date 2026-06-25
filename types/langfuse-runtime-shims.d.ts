@@ -12,9 +12,23 @@ declare module "@langfuse/otel" {
       publicKey: string;
       secretKey: string;
       baseUrl: string;
+      environment?: string;
+      release?: string;
     });
     forceFlush?(): Promise<void>;
     shutdown?(): Promise<void>;
+  }
+}
+
+declare module "@opentelemetry/api" {
+  export const context: {
+    setGlobalContextManager(manager: unknown): boolean;
+  };
+}
+
+declare module "@opentelemetry/context-async-hooks" {
+  export class AsyncLocalStorageContextManager {
+    enable(): this;
   }
 }
 
