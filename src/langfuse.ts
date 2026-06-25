@@ -1,5 +1,6 @@
 import type { LangfuseRuntime, LangfuseScoreClient } from "./types.js";
 import { state } from "./state.js";
+import { shapePayload } from "./utils.js";
 import { randomUUID } from "node:crypto";
 
 let runtime: LangfuseRuntime | null = null;
@@ -7,6 +8,7 @@ let contextManagerRegistered = false;
 const activeSessions = new Set<string>();
 
 type FallbackObservationType = "SPAN" | "GENERATION";
+type RestFallbackEventType = "trace-create" | "span-create" | "generation-create";
 
 interface RestFallbackTrace {
   id: string;
@@ -47,9 +49,27 @@ interface RestFallbackStore {
   attempted: boolean;
 }
 
+interface RestFallbackEvent {
+  type: RestFallbackEventType;
+  id: string;
+  timestamp: string;
+  body: Record<string, unknown>;
+}
+
 const OTEL_VISIBILITY_TIMEOUT_MS = 1_500;
 const OTEL_VISIBILITY_POLL_INTERVAL_MS = 200;
 const DEFAULT_SHUTDOWN_STEP_TIMEOUT_MS = 2_000;
+
+// Langfuse Cloud currently rejects ingestion bodies above ~4.5 MiB. Keep
+// fallback requests comfortably below that so JSON encoding differences,
+// headers, and future metadata additions do not push us over the server limit.
+const REST_FALLBACK_MAX_REQUEST_BYTES = 3_500_000;
+const REST_FALLBACK_MAX_STRING_LENGTH = 2_000;
+const REST_FALLBACK_MAX_NODES = 200;
+const REST_FALLBACK_MAX_DEPTH = 4;
+const REST_FALLBACK_MAX_TAGS = 20;
+const REST_FALLBACK_TRUNCATED_MARKER =
+  "[truncated by pi-langfuse REST fallback to stay below Langfuse ingestion limits]";
 
 let shutdownStepTimeoutMs = DEFAULT_SHUTDOWN_STEP_TIMEOUT_MS;
 
@@ -255,6 +275,287 @@ function eventTimestamp(record: { endTime?: string; startTime?: string; timestam
   return record.endTime ?? record.startTime ?? record.timestamp ?? nowIso();
 }
 
+function truncateText(value: string, maxLength: number): string {
+  return value.length > maxLength ? `${value.slice(0, maxLength)}... [truncated]` : value;
+}
+
+function jsonByteSize(value: unknown): number {
+  try {
+    return new TextEncoder().encode(JSON.stringify(value)).length;
+  } catch {
+    return Number.POSITIVE_INFINITY;
+  }
+}
+
+function stripUndefined<T extends Record<string, unknown>>(record: T): Record<string, unknown> {
+  const output: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(record)) {
+    if (value !== undefined) {
+      output[key] = value;
+    }
+  }
+  return output;
+}
+
+function shapeFallbackValue(value: unknown): unknown {
+  if (value === undefined) {
+    return undefined;
+  }
+  return shapePayload(value, {
+    maxString: REST_FALLBACK_MAX_STRING_LENGTH,
+    depth: REST_FALLBACK_MAX_DEPTH,
+    maxNodes: REST_FALLBACK_MAX_NODES,
+    parseJson: false,
+  });
+}
+
+function shapeFallbackRecord(value: unknown): Record<string, unknown> | undefined {
+  const shaped = shapeFallbackValue(value);
+  return shaped && typeof shaped === "object" && !Array.isArray(shaped)
+    ? (shaped as Record<string, unknown>)
+    : undefined;
+}
+
+function shapeFallbackTags(tags: string[] | undefined): string[] | undefined {
+  if (!tags || tags.length === 0) {
+    return undefined;
+  }
+  return tags.slice(0, REST_FALLBACK_MAX_TAGS).map((tag) => truncateText(String(tag), 200));
+}
+
+function createTraceFallbackEvent(trace: RestFallbackTrace): RestFallbackEvent {
+  return {
+    type: "trace-create",
+    id: randomUUID(),
+    timestamp: eventTimestamp(trace),
+    body: stripUndefined({
+      id: trace.id,
+      timestamp: trace.timestamp,
+      name: trace.name,
+      input: shapeFallbackValue(trace.input),
+      output: shapeFallbackValue(trace.output),
+      sessionId: trace.sessionId,
+      environment: trace.environment,
+      tags: shapeFallbackTags(trace.tags),
+      metadata: shapeFallbackRecord(trace.metadata),
+    }),
+  };
+}
+
+function createObservationFallbackEvent(observation: RestFallbackObservation): RestFallbackEvent {
+  return {
+    type: observation.type === "GENERATION" ? "generation-create" : "span-create",
+    id: randomUUID(),
+    timestamp: eventTimestamp(observation),
+    body: stripUndefined({
+      id: observation.id,
+      traceId: observation.traceId,
+      name: observation.name,
+      startTime: observation.startTime,
+      endTime: observation.endTime,
+      input: shapeFallbackValue(observation.input),
+      output: shapeFallbackValue(observation.output),
+      metadata: shapeFallbackRecord(observation.metadata),
+      level: observation.level,
+      statusMessage: observation.statusMessage ? truncateText(observation.statusMessage, 1_000) : undefined,
+      parentObservationId: observation.parentObservationId,
+      ...(observation.type === "GENERATION"
+        ? {
+            completionStartTime: observation.completionStartTime,
+            model: observation.model ? truncateText(observation.model, 500) : undefined,
+            modelParameters: shapeFallbackRecord(observation.modelParameters),
+            usageDetails: shapeFallbackRecord(observation.usageDetails),
+            costDetails: shapeFallbackRecord(observation.costDetails),
+          }
+        : {}),
+    }),
+  };
+}
+
+function createRestFallbackRequest(batch: RestFallbackEvent[], batchIndex: number, totalBatches: number) {
+  return {
+    batch,
+    metadata: {
+      source: "pi-langfuse",
+      fallback: "rest-ingestion",
+      reason: "otel-trace-not-visible-after-flush",
+      batchIndex,
+      totalBatches,
+      eventCount: batch.length,
+      maxRequestBytes: REST_FALLBACK_MAX_REQUEST_BYTES,
+    },
+  };
+}
+
+function compactMetadata(metadata: unknown): Record<string, unknown> {
+  const output: Record<string, unknown> = {
+    piLangfuseRestFallbackTruncated: true,
+    truncationReason: REST_FALLBACK_TRUNCATED_MARKER,
+  };
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) {
+    return output;
+  }
+
+  let copied = 0;
+  for (const [key, value] of Object.entries(metadata as Record<string, unknown>)) {
+    if (copied >= 20) {
+      break;
+    }
+    if (value === undefined || value === null || typeof value === "object" || typeof value === "function" || typeof value === "symbol") {
+      continue;
+    }
+    output[key] = typeof value === "string" ? truncateText(value, 300) : value;
+    copied++;
+  }
+  return output;
+}
+
+function compactFallbackEvent(event: RestFallbackEvent): RestFallbackEvent {
+  const body = { ...event.body };
+  if ("input" in body) {
+    body.input = REST_FALLBACK_TRUNCATED_MARKER;
+  }
+  if ("output" in body) {
+    body.output = REST_FALLBACK_TRUNCATED_MARKER;
+  }
+  body.metadata = compactMetadata(body.metadata);
+  if (typeof body.statusMessage === "string") {
+    body.statusMessage = truncateText(body.statusMessage, 300);
+  }
+  return { ...event, body };
+}
+
+function minimalFallbackEvent(event: RestFallbackEvent): RestFallbackEvent {
+  const body = event.body;
+  const common = stripUndefined({
+    id: body.id,
+    traceId: body.traceId,
+    name: body.name,
+    timestamp: body.timestamp,
+    startTime: body.startTime,
+    endTime: body.endTime,
+    parentObservationId: body.parentObservationId,
+    sessionId: body.sessionId,
+    environment: body.environment,
+    tags: Array.isArray(body.tags) ? body.tags.slice(0, REST_FALLBACK_MAX_TAGS) : undefined,
+    level: body.level,
+    statusMessage: typeof body.statusMessage === "string" ? truncateText(body.statusMessage, 300) : undefined,
+    model: typeof body.model === "string" ? truncateText(body.model, 300) : undefined,
+    usageDetails: body.usageDetails,
+    costDetails: body.costDetails,
+    metadata: {
+      piLangfuseRestFallbackTruncated: true,
+      truncationReason: REST_FALLBACK_TRUNCATED_MARKER,
+    },
+  });
+  return { ...event, body: common };
+}
+
+function fitFallbackEvent(event: RestFallbackEvent): RestFallbackEvent {
+  if (jsonByteSize(createRestFallbackRequest([event], 1, 1)) <= REST_FALLBACK_MAX_REQUEST_BYTES) {
+    return event;
+  }
+
+  const compacted = compactFallbackEvent(event);
+  if (jsonByteSize(createRestFallbackRequest([compacted], 1, 1)) <= REST_FALLBACK_MAX_REQUEST_BYTES) {
+    return compacted;
+  }
+
+  return minimalFallbackEvent(event);
+}
+
+function createRestFallbackBatches(events: RestFallbackEvent[]): RestFallbackEvent[][] {
+  const batches: RestFallbackEvent[][] = [];
+  let currentBatch: RestFallbackEvent[] = [];
+
+  for (const rawEvent of events) {
+    const event = fitFallbackEvent(rawEvent);
+    const candidate = [...currentBatch, event];
+    if (
+      currentBatch.length > 0 &&
+      jsonByteSize(createRestFallbackRequest(candidate, 1, 1)) > REST_FALLBACK_MAX_REQUEST_BYTES
+    ) {
+      batches.push(currentBatch);
+      currentBatch = [event];
+    } else {
+      currentBatch = candidate;
+    }
+  }
+
+  if (currentBatch.length > 0) {
+    batches.push(currentBatch);
+  }
+
+  return batches;
+}
+
+function summarizeIngestionError(error: unknown): string {
+  const record = error && typeof error === "object" ? (error as Record<string, any>) : undefined;
+  const bodyError = record?.body?.error;
+  const statusCode = record?.statusCode ?? bodyError?.statusCode ?? record?.rawResponse?.status;
+  const message =
+    bodyError?.rawBody ??
+    bodyError?.reason ??
+    record?.rawResponse?.statusText ??
+    record?.message ??
+    (typeof error === "string" ? error : "unknown error");
+  return `${statusCode ? `statusCode=${statusCode} ` : ""}${truncateText(String(message), 500)}`.trim();
+}
+
+function isPayloadTooLargeError(error: unknown): boolean {
+  const record = error && typeof error === "object" ? (error as Record<string, any>) : undefined;
+  const statusCode = record?.statusCode ?? record?.body?.error?.statusCode ?? record?.rawResponse?.status;
+  const message = String(record?.body?.error?.rawBody ?? record?.rawResponse?.statusText ?? record?.message ?? error ?? "");
+  return statusCode === 413 || /body exceeded|payload too large|request entity too large/i.test(message);
+}
+
+async function sendRestFallbackBatch(
+  ingestionApi: { batch?: (request: unknown) => Promise<unknown> },
+  batch: RestFallbackEvent[],
+  batchLabel: string,
+  totalBatches: number,
+  allowPayloadRetry = true,
+): Promise<boolean> {
+  const request = createRestFallbackRequest(batch, Number.parseInt(batchLabel, 10) || 1, totalBatches);
+  try {
+    const response = await withTimeout(`REST fallback ingestion batch ${batchLabel}/${totalBatches}`, ingestionApi.batch?.(request));
+    if (!response) {
+      return false;
+    }
+
+    const responseBody = response as { errors?: unknown[] } | undefined;
+    const responseErrors = responseBody?.errors;
+    const errors = Array.isArray(responseErrors) ? responseErrors : [];
+    if (errors.length > 0) {
+      console.warn(
+        `📊 Langfuse: REST fallback ingestion reported ${errors.length} error(s) for batch ${batchLabel}/${totalBatches}`,
+      );
+      return false;
+    }
+    return true;
+  } catch (error) {
+    if (allowPayloadRetry && isPayloadTooLargeError(error)) {
+      if (batch.length > 1) {
+        const midpoint = Math.ceil(batch.length / 2);
+        const left = await sendRestFallbackBatch(ingestionApi, batch.slice(0, midpoint), `${batchLabel}.1`, totalBatches, true);
+        const right = await sendRestFallbackBatch(ingestionApi, batch.slice(midpoint), `${batchLabel}.2`, totalBatches, true);
+        return left && right;
+      }
+
+      const compacted = minimalFallbackEvent(batch[0]);
+      if (jsonByteSize(createRestFallbackRequest([compacted], 1, 1)) < jsonByteSize(request)) {
+        return sendRestFallbackBatch(ingestionApi, [compacted], `${batchLabel}.compact`, totalBatches, false);
+      }
+    }
+
+    console.warn(
+      `📊 Langfuse: REST fallback ingestion failed for batch ${batchLabel}/${totalBatches} ` +
+        `(${batch.length} event(s), ${jsonByteSize(request)} bytes): ${summarizeIngestionError(error)}`,
+    );
+    return false;
+  }
+}
+
 async function fallbackToRestIngestion(rt: LangfuseRuntime) {
   const store = rt.restFallback as RestFallbackStore | undefined;
   if (!store?.trace || store.attempted) {
@@ -267,55 +568,7 @@ async function fallbackToRestIngestion(rt: LangfuseRuntime) {
   }
 
   const trace = store.trace;
-  const batch: any[] = [
-    {
-      type: "trace-create",
-      id: randomUUID(),
-      timestamp: eventTimestamp(trace),
-      body: {
-        id: trace.id,
-        timestamp: trace.timestamp,
-        name: trace.name,
-        input: trace.input,
-        output: trace.output,
-        sessionId: trace.sessionId,
-        environment: trace.environment,
-        tags: trace.tags,
-        metadata: trace.metadata,
-      },
-    },
-  ];
-
-  for (const observation of store.observations) {
-    const body = {
-      id: observation.id,
-      traceId: observation.traceId,
-      name: observation.name,
-      startTime: observation.startTime,
-      endTime: observation.endTime,
-      input: observation.input,
-      output: observation.output,
-      metadata: observation.metadata,
-      level: observation.level,
-      statusMessage: observation.statusMessage,
-      parentObservationId: observation.parentObservationId,
-      ...(observation.type === "GENERATION"
-        ? {
-            completionStartTime: observation.completionStartTime,
-            model: observation.model,
-            modelParameters: observation.modelParameters,
-            usageDetails: observation.usageDetails,
-            costDetails: observation.costDetails,
-          }
-        : {}),
-    };
-    batch.push({
-      type: observation.type === "GENERATION" ? "generation-create" : "span-create",
-      id: randomUUID(),
-      timestamp: eventTimestamp(observation),
-      body,
-    });
-  }
+  const events = [createTraceFallbackEvent(trace), ...store.observations.map(createObservationFallbackEvent)];
 
   const ingestionApi = rt.scoreClient.api?.ingestion;
   if (!ingestionApi?.batch) {
@@ -323,29 +576,25 @@ async function fallbackToRestIngestion(rt: LangfuseRuntime) {
     return;
   }
 
-  const response = await withTimeout(
-    "REST fallback ingestion",
-    ingestionApi.batch({
-      batch,
-      metadata: {
-        source: "pi-langfuse",
-        fallback: "rest-ingestion",
-        reason: "otel-trace-not-visible-after-flush",
-      },
-    }),
-  );
-
-  if (!response) {
-    return;
+  const batches = createRestFallbackBatches(events);
+  let sentBatches = 0;
+  for (let index = 0; index < batches.length; index++) {
+    const ok = await sendRestFallbackBatch(ingestionApi, batches[index], String(index + 1), batches.length);
+    if (ok) {
+      sentBatches++;
+    }
   }
 
-  const responseBody = response as { errors?: unknown[] } | undefined;
-  const responseErrors = responseBody?.errors;
-  const errors = Array.isArray(responseErrors) ? responseErrors : [];
-  if (errors.length > 0) {
-    console.warn("📊 Langfuse: REST fallback ingestion reported errors", errors);
-  } else {
-    debugLog(`📊 Langfuse: OTel trace ${trace.id} was not visible; wrote fallback trace via REST ingestion`);
+  if (sentBatches === batches.length) {
+    debugLog(
+      `📊 Langfuse: OTel trace ${trace.id} was not visible; wrote fallback trace via REST ingestion ` +
+        `in ${batches.length} batch(es)`,
+    );
+  } else if (sentBatches > 0) {
+    console.warn(
+      `📊 Langfuse: REST fallback ingestion partially succeeded for trace ${trace.id}: ` +
+        `${sentBatches}/${batches.length} batch(es) accepted`,
+    );
   }
 }
 
