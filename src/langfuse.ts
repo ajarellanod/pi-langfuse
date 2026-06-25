@@ -15,6 +15,8 @@ interface RestFallbackTrace {
   input?: unknown;
   output?: unknown;
   sessionId?: string;
+  environment?: string;
+  tags?: string[];
   metadata?: Record<string, unknown>;
 }
 
@@ -277,6 +279,8 @@ async function fallbackToRestIngestion(rt: LangfuseRuntime) {
         input: trace.input,
         output: trace.output,
         sessionId: trace.sessionId,
+        environment: trace.environment,
+        tags: trace.tags,
         metadata: trace.metadata,
       },
     },
@@ -416,6 +420,25 @@ export async function getRuntime(): Promise<LangfuseRuntime> {
   }
 
   return runtime as LangfuseRuntime;
+}
+
+/**
+ * Attach trace-level attributes to the REST fallback store so short-lived runs
+ * (where the OTel trace is not visible before shutdown) don't lose `environment`
+ * and `tags`. These are set on the OTel span via the processor / propagateAttributes,
+ * but the REST fallback trace-create event must carry them explicitly.
+ */
+export function annotateFallbackTrace(attributes: { environment?: string; tags?: string[] }): void {
+  const store = runtime?.restFallback as RestFallbackStore | undefined;
+  if (!store?.trace) {
+    return;
+  }
+  if (attributes.environment && !store.trace.environment) {
+    store.trace.environment = attributes.environment;
+  }
+  if (attributes.tags && attributes.tags.length > 0) {
+    store.trace.tags = attributes.tags;
+  }
 }
 
 function doShutdownRuntime(): Promise<void> {

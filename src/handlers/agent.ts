@@ -1,10 +1,11 @@
 import { state, resetRunState, computeEvaluationScores } from "../state.js";
-import { getRuntime, sendScore } from "../langfuse.js";
+import { getRuntime, sendScore, annotateFallbackTrace } from "../langfuse.js";
 import { ensureConfig } from "../config.js";
 import { shapePayload, truncate, extractFinalAssistant, extractAssistantOutput, getCapturePolicy } from "../utils.js";
 import { closeDanglingObservations } from "./tool.js";
 import { applyCapturePolicy } from "../capture-policy.js";
 import { collectSourceMetadata } from "../source-metadata.js";
+import { getExtensionVersion } from "../constants.js";
 
 function buildTraceTags(sourceMetadata: Record<string, string>): string[] {
   const candidates = [
@@ -120,12 +121,14 @@ export async function startAgentRun(event: Record<string, unknown>, ctx: any) {
     };
 
     const tags = buildTraceTags(sourceMetadata);
+    const version = getExtensionVersion();
     const root = rt.propagateAttributes(
       {
         sessionId: state.currentSessionId ? truncate(state.currentSessionId, 200) : undefined,
         traceName: "pi-agent",
         metadata: stringMetadata(captured.metadata),
         ...(tags.length > 0 ? { tags } : {}),
+        ...(version ? { version } : {}),
       },
       () =>
         rt.startObservation(
@@ -143,6 +146,7 @@ export async function startAgentRun(event: Record<string, unknown>, ctx: any) {
 
     state.agentState.root = root;
     state.agentState.traceId = root.traceId;
+    annotateFallbackTrace({ environment: state.config?.environment, tags });
     updateTraceIO(captured.input, undefined);
   } catch (e) {
     console.warn("📊 Langfuse: Failed to create agent observation", e);

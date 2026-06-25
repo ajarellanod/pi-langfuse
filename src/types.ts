@@ -71,6 +71,7 @@ export interface LangfuseRuntime {
       traceName?: string;
       metadata?: Record<string, string>;
       tags?: string[];
+      version?: string;
     },
     fn: () => LangfuseObservation,
   ) => LangfuseObservation;

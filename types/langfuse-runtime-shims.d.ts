@@ -47,6 +47,7 @@ declare module "@langfuse/tracing" {
       traceName?: string;
       metadata?: Record<string, string>;
       tags?: string[];
+      version?: string;
     },
     fn: () => T,
   ): T;
