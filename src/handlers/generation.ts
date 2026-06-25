@@ -165,7 +165,21 @@ export async function finishGenerationFromMessage(event: Record<string, unknown>
     return;
   }
 
-  const generation = getOpenGeneration();
+  let generation: GenerationState | undefined;
+  for (const key of [getRequestKey(event, ""), getRequestKey(message, "")]) {
+    if (!key) {
+      continue;
+    }
+    const match = state.agentState.activeGenerations.get(key);
+    if (match) {
+      generation = match;
+      break;
+    }
+  }
+  if (!generation) {
+    generation = getOpenGeneration();
+  }
+
   const rawOutput = extractAssistantOutput(message);
   const captured = applyCapturePolicy({ output: rawOutput }, getCapturePolicy());
   const output = captured.output;

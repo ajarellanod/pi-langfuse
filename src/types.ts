@@ -5,6 +5,8 @@ export interface Config {
   secretKey: string;
   host: string;
   capturePolicy?: CapturePolicy;
+  environment?: string;
+  release?: string;
 }
 
 export interface LangfuseObservation {

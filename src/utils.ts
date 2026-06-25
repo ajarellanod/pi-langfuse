@@ -375,15 +375,19 @@ export function extractUsage(messageOrEvent: Record<string, unknown>): Record<st
   const input = Number(usage.input ?? usage.inputTokens ?? usage.prompt_tokens ?? usage.promptTokens ?? 0);
   const output = Number(usage.output ?? usage.outputTokens ?? usage.completion_tokens ?? usage.completionTokens ?? 0);
   const total = Number(usage.total ?? usage.totalTokens ?? usage.total_tokens ?? input + output);
-  const cacheRead = Number(usage.cacheRead ?? usage.cache_read ?? usage.cachedTokens ?? 0);
-  const cacheWrite = Number(usage.cacheWrite ?? usage.cache_write ?? 0);
+  const cacheRead = Number(
+    usage.cacheRead ?? usage.cache_read ?? usage.cachedTokens ?? usage.cache_read_input_tokens ?? 0,
+  );
+  const cacheWrite = Number(
+    usage.cacheWrite ?? usage.cache_write ?? usage.cache_creation_input_tokens ?? 0,
+  );
 
   return {
     input,
     output,
     total,
-    ...(cacheRead ? { cacheRead } : {}),
-    ...(cacheWrite ? { cacheWrite } : {}),
+    ...(cacheRead ? { cache_read_input_tokens: cacheRead } : {}),
+    ...(cacheWrite ? { cache_creation_input_tokens: cacheWrite } : {}),
   };
 }
 

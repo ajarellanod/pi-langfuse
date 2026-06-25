@@ -1,9 +1,14 @@
 # pi-langfuse
 
-[![npm version](https://img.shields.io/npm/v/pi-langfuse)](https://www.npmjs.com/package/pi-langfuse)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 [**English**](./README.md) | [**简体中文**](./README_CN.md)
+
+## Credit & Attribution
+
+This is a **fork** of [pi-langfuse](https://github.com/gooyoung/pi-langfuse), originally created by **gooyoung**. All credit for the original design and implementation belongs to the original author.
+
+This fork adds further improvements while preserving the original MIT license and author credit. It is distributed from [github.com/ajarellanod/pi-langfuse](https://github.com/ajarellanod/pi-langfuse) and is **not published to npm**, so it is installed directly from the Git repository (see [Quick Start](#quick-start)).
 
 Langfuse observability extension for [Pi Coding Agent](https://github.com/earendil-works/pi-coding-agent). It sends complete Pi runs to [Langfuse](https://langfuse.com) so the prompt, agent workflow, LLM generations, tool calls, final response, usage, cost, and health scores appear in one trace.
 
@@ -24,11 +29,13 @@ Langfuse observability extension for [Pi Coding Agent](https://github.com/earend
 
 ## Quick Start
 
-1. Install the extension:
+1. Install the extension from the Git repository:
 
    ```bash
-   pi install npm:pi-langfuse
+   pi install git:github.com/ajarellanod/pi-langfuse
    ```
+
+   > You can also install from a local clone with `pi install ./pi-langfuse` (or any path to the checked-out repo).
 
 2. Run Pi once. If no credentials are configured yet, Pi prompts for:
    - Langfuse public key, starting with `pk-lf-...`
@@ -133,7 +140,7 @@ Check that Pi has loaded the package:
 pi list
 ```
 
-`pi-langfuse` should appear in the installed package list.
+`pi-langfuse` should appear in the installed package list (the package name stays `pi-langfuse` even when installed from Git).
 
 ## What Appears in Langfuse
 
@@ -210,7 +217,7 @@ The extension must not upload raw absolute local paths, credentialed remotes, to
 
 ```bash
 pi list
-pi install npm:pi-langfuse
+pi install git:github.com/ajarellanod/pi-langfuse
 ```
 
 ### "Missing config" on startup?
@@ -236,4 +243,6 @@ Development setup, source installation, runtime architecture, trace model, track
 
 ## License
 
-MIT
+MIT.
+
+This fork preserves the original MIT license and author credit. pi-langfuse was originally created by **gooyoung** ([github.com/gooyoung/pi-langfuse](https://github.com/gooyoung/pi-langfuse)); this fork at [github.com/ajarellanod/pi-langfuse](https://github.com/ajarellanod/pi-langfuse) adds improvements while keeping that attribution intact.

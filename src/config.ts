@@ -22,6 +22,8 @@ export function loadConfigFromFile(path = CONFIG_PATH, env: EnvLike = process.en
           secretKey: config.secretKey,
           host: config.host || DEFAULT_LANGFUSE_HOST,
           capturePolicy: createCapturePolicy(captureSource),
+          environment: config.environment || env.LANGFUSE_TRACING_ENVIRONMENT || env.LANGFUSE_ENVIRONMENT || undefined,
+          release: config.release || env.LANGFUSE_RELEASE || undefined,
         };
       }
     } catch (e) {
@@ -44,6 +46,8 @@ export function loadConfigFromEnv(env: EnvLike = process.env as EnvLike): Config
     secretKey,
     host: env.LANGFUSE_BASE_URL || env.LANGFUSE_HOST || DEFAULT_LANGFUSE_HOST,
     capturePolicy: createCapturePolicy(env),
+    environment: env.LANGFUSE_TRACING_ENVIRONMENT || env.LANGFUSE_ENVIRONMENT || undefined,
+    release: env.LANGFUSE_RELEASE || undefined,
   };
 }
 

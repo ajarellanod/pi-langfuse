@@ -1,9 +1,14 @@
 # pi-langfuse
 
-[![npm version](https://img.shields.io/npm/v/pi-langfuse)](https://www.npmjs.com/package/pi-langfuse)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 [**English**](./README.md) | [**简体中文**](./README_CN.md)
+
+## 鸣谢与归属
+
+本项目是 [pi-langfuse](https://github.com/gooyoung/pi-langfuse) 的**分叉（fork）**，原项目由 **gooyoung** 创建。原始设计与实现的所有功劳归于原作者。
+
+本分叉在保留原始 MIT 许可证和作者署名的前提下添加了进一步的改进。它由 [github.com/ajarellanod/pi-langfuse](https://github.com/ajarellanod/pi-langfuse) 发布，且**不会发布到 npm**，因此需直接从 Git 仓库安装（参见[快速开始](#快速开始)）。
 
 [Pi Coding Agent](https://github.com/earendil-works/pi-coding-agent) 的 Langfuse 可观测性扩展。它会将完整的 Pi 运行发送到 [Langfuse](https://langfuse.com)，在一个 trace 中展示提示词、代理工作流、LLM 生成、工具调用、最终回复、用量、成本和健康分数。
 
@@ -24,11 +29,13 @@
 
 ## 快速开始
 
-1. 安装扩展：
+1. 从 Git 仓库安装扩展：
 
    ```bash
-   pi install npm:pi-langfuse
+   pi install git:github.com/ajarellanod/pi-langfuse
    ```
+
+   > 也可以从本地克隆安装：`pi install ./pi-langfuse`（或指向已检出仓库的任意路径）。
 
 2. 首次运行 Pi 时，如果尚未配置凭据，Pi 会提示输入：
    - Langfuse 公钥，以 `pk-lf-...` 开头
@@ -133,7 +140,7 @@ export LANGFUSE_CAPTURE_CWD=false
 pi list
 ```
 
-已安装包列表中应出现 `pi-langfuse`。
+已安装包列表中应出现 `pi-langfuse`（即使从 Git 安装，包名仍为 `pi-langfuse`）。
 
 ## 在 Langfuse 中会看到什么
 
@@ -163,7 +170,7 @@ pi list
 
 ```bash
 pi list
-pi install npm:pi-langfuse
+pi install git:github.com/ajarellanod/pi-langfuse
 ```
 
 ### 启动时显示 `Missing config`
@@ -189,4 +196,6 @@ pi install npm:pi-langfuse
 
 ## 许可证
 
-MIT
+MIT。
+
+本分叉保留原始 MIT 许可证和作者署名。pi-langfuse 最初由 **gooyoung** 创建（[github.com/gooyoung/pi-langfuse](https://github.com/gooyoung/pi-langfuse)）；本分叉 [github.com/ajarellanod/pi-langfuse](https://github.com/ajarellanod/pi-langfuse) 在保留该署名的同时添加了改进。

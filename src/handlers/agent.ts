@@ -6,6 +6,30 @@ import { closeDanglingObservations } from "./tool.js";
 import { applyCapturePolicy } from "../capture-policy.js";
 import { collectSourceMetadata } from "../source-metadata.js";
 
+function buildTraceTags(sourceMetadata: Record<string, string>): string[] {
+  const candidates = [
+    sourceMetadata.source_type,
+    sourceMetadata.repo_identity,
+    state.currentProvider ? `provider:${state.currentProvider}` : undefined,
+    state.currentModel ? `model:${state.currentModel}` : undefined,
+  ];
+
+  const seen = new Set<string>();
+  const tags: string[] = [];
+  for (const candidate of candidates) {
+    const tag = candidate?.trim();
+    if (!tag) {
+      continue;
+    }
+    const bounded = truncate(tag, 200);
+    if (!seen.has(bounded)) {
+      seen.add(bounded);
+      tags.push(bounded);
+    }
+  }
+  return tags;
+}
+
 function stringMetadata(metadata: Record<string, unknown> | undefined): Record<string, string> | undefined {
   if (!metadata) {
     return undefined;
@@ -95,11 +119,13 @@ export async function startAgentRun(event: Record<string, unknown>, ctx: any) {
       providerMetadataByRequest: new Map(),
     };
 
+    const tags = buildTraceTags(sourceMetadata);
     const root = rt.propagateAttributes(
       {
         sessionId: state.currentSessionId ? truncate(state.currentSessionId, 200) : undefined,
         traceName: "pi-agent",
         metadata: stringMetadata(captured.metadata),
+        ...(tags.length > 0 ? { tags } : {}),
       },
       () =>
         rt.startObservation(

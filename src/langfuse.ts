@@ -371,10 +371,15 @@ export async function getRuntime(): Promise<LangfuseRuntime> {
       attempted: false,
     };
 
+    // The span processor is a process-level singleton, so environment/release are
+    // scoped to the process and config — not per-trace. All traces emitted by this
+    // runtime inherit the same environment and release.
     const spanProcessor = new LangfuseSpanProcessor({
       publicKey: state.config.publicKey,
       secretKey: state.config.secretKey,
       baseUrl: state.config.host,
+      ...(state.config.environment ? { environment: state.config.environment } : {}),
+      ...(state.config.release ? { release: state.config.release } : {}),
     });
     const tracerProvider = new BasicTracerProvider({ spanProcessors: [spanProcessor] });
     tracing.setLangfuseTracerProvider(tracerProvider);
